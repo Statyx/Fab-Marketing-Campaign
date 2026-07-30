@@ -122,6 +122,9 @@ python src\deploy_all.py
 #   or a subset:  python src\deploy_all.py workspace lakehouse
 #   or resume:    python src\deploy_all.py --from semantic_model
 #   or skip:      python src\deploy_all.py --skip ontology,graph
+
+# 5. Run the portal (embedded report pages + Data Agent chat)
+.\portal\start.ps1                              # http://localhost:8000
 ```
 
 Deploy order is strict: `workspace → lakehouse → setup notebook → semantic model → ontology →
@@ -149,16 +152,85 @@ src/config.yaml               — workspace, storyline, churn weights, volumes (
 src/generate_data.py          — behaviour simulation + derived churn
 src/helpers.py                — Fabric API auth, async polling, config/state
 src/deploy_all.py             — orchestrator (strict order, resumable, tenant-guarded)
-src/deploy_semantic_model.py  — Direct Lake model: 12 tables / 11 relationships / 49 measures
+src/deploy_semantic_model.py  — Direct Lake model: 12 tables / 11 relationships / 50 measures
 src/deploy_ontology.py        — 8 entities / 9 relationships (Fabric IQ)
 src/deploy_graph.py           — graph definition + RefreshGraph
-src/deploy_report.py          — Power BI report: 4 pages / 46 visuals (legacy PBIX)
+src/deploy_report.py          — Power BI report, 4 persona pages (legacy PBIX) — publishes RPT_Marketing_Churn
+src/deploy_report_arc.py      — second generator, 4 narrative-arc pages + layout/field validators
+src/validate_report.py        — replays every visual's prototypeQuery in DAX (proves none render blank)
+src/build_taskflow.py         — generates the workspace task flow JSON from config.yaml
 src/deploy_data_agent.py      — dual-source agent (ontology GQL + semantic model DAX)
 src/state.json                — deployment IDs (idempotent, gitignored)
-tests/test_smoke.py           — offline gate, 54 tests
+portal/                       — FastAPI portal: 4 personas, embedded report pages + Data Agent chat
+tests/test_smoke.py           — offline gate: data signal, report ↔ model, portal ↔ report, layout, guards
+tests/test_taskflow.py        — task flow gate (schema, DAG, config sync, dual-source)
+taskflow/                     — workspace task flow + import instructions
 theme/                        — accessible Fluent-2 Power BI theme (WCAG / colour-blind checked)
 docs/ARCHITECTURE.md          — full design
 ```
+
+---
+
+## The portal
+
+A FastAPI app that puts one **persona** in front of each report page: the page is embedded on
+the right, a chat with the Data Agent on the left, both sharing the same accent colour.
+
+```powershell
+az login                  # the backend uses AzureCliCredential — no service principal
+.\portal\start.ps1        # http://localhost:8000
+```
+
+`start.ps1` refuses to launch if `src/state.json` has no `workspace_id` / `report_id` /
+`data_agent_id`, so a missing deploy surfaces as an error instead of an empty embed panel.
+
+| Persona | Page | Question it answers |
+|---|---|---|
+| 🎯 Direction | Direction | how much value is exposed |
+| 🛟 Retention | Retention | who is leaving, and which customers to call |
+| 📣 Marketing | Marketing | which campaign caused it |
+| 🛒 Commerce | Commerce | what it costs in revenue |
+
+Everything is config-driven: personas live in the `AGENTS` dict in `portal/backend/main.py`,
+the frontend discovers them from `/api/agents`, and all IDs are read from `src/state.json` —
+there is not a single hardcoded GUID. Adding a persona is one dict entry.
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/health` | liveness + token expiry — hit this first on a 502 |
+| `GET /api/agents` | persona registry + tenant/workspace context |
+| `POST /api/agents/{key}/chat` | question → Data Agent, returns answer, tool trace, follow-ups |
+| `GET /api/embed-token` | report embed URL + user token (user-owns-data) |
+| `POST /api/admin/refresh-tokens` | force a token refresh without restarting |
+
+
+---
+
+## Workspace task flow
+
+The workspace canvas that turns a flat item list into the story:
+
+```
+Ingest ──► Lakehouse ─┬─► Ontology (+ graph) ─┐
+(notebook)            │                       ├─► Data Agent
+                      └─► Semantic Model ─────┘
+                              │
+                              └──────────────────► Report
+```
+
+Both the semantic model **and** the ontology's graph feed the Data Agent — the dual-source rule
+made visible on the canvas. The graph gets no task of its own (it is underlying to the ontology),
+and the CSV→Delta notebook sits on the ingest task rather than duplicating it.
+
+Fabric has **no public REST API for task flows**, so this is a generated JSON you import once:
+
+```powershell
+python src\build_taskflow.py     # -> taskflow\marketing_taskflow.json
+```
+
+Then workspace → task flow details pane → **Import and export task flow** → *Import*, and
+replay the item assignments (the file cannot carry them). Full steps and the item→task table:
+[`taskflow/README.md`](taskflow/README.md).
 
 ---
 
@@ -170,20 +242,23 @@ Everything below was deployed **and read back from the tenant** on workspace
 | Layer | Code | Deployed |
 |---|---|---|
 | Config-driven generator with real churn | ✅ | n/a |
-| Test gate (54 tests, fully offline) | ✅ | n/a |
+| Test gate (101 tests, fully offline) | ✅ | n/a |
 | Workspace + Lakehouse (15 CSV + 420 text files) | ✅ | ✅ `LH_Customer360` |
 | Delta tables + curated churn views (Spark notebook) | ✅ | ✅ `NB_Setup_Customer360` |
-| Semantic model (Direct Lake, 12 tables / 49 measures) | ✅ | ✅ `SM_Marketing_Analytics` |
+| Semantic model (Direct Lake, 12 tables / 50 measures) | ✅ | ✅ `SM_Marketing_Analytics` |
+| Workspace task flow (6 tasks, generated + gated) | ✅ | ✅ imported |
 | Ontology + Graph (Customer 360) | ✅ | ✅ `ONT_Customer360` |
-| Power BI report (4 pages / 46 visuals) | ✅ | ✅ `RPT_Marketing_Churn` |
+| Power BI report (4 pages / 46 visuals) | ✅ | ✅ `RPT_Marketing_Churn`, 35/35 visual queries return data |
+| Portal (4 personas, embed + chat) | ✅ | ✅ running, chat verified end-to-end |
 | Dual-source Data Agent | ✅ | ✅ `Marketing_Churn_Agent` |
 
 How each ✅ was proven:
 
 - **Semantic model** — the definition is read back after every push and compared measure by
-  measure against what was sent (49/49 match). See *Two deployment traps* below.
-- **Report** — all 27 measures and 10 columns referenced by its 46 visuals were resolved
-  against the live model via `executeQueries`; zero broken bindings.
+  measure against what was sent (50/50 match). See *Two deployment traps* below.
+- **Report** — every measure and column referenced by its 46 visuals was resolved against the
+  live model via `executeQueries`; zero broken bindings. `validate_report.py` additionally
+  replays each visual's `prototypeQuery` in DAX: 35/35 return data, so none renders blank.
 - **Data Agent** — a readback confirms both datasources were accepted:
   `ontology` → `ONT_Customer360`, `semantic_model` → `SM_Marketing_Analytics`.
 
@@ -225,6 +300,13 @@ Both were hit for real on this tenant and both were **silent** — every script 
 A third, unrelated race: after deleting a notebook Fabric frees the *display name* later than it
 removes the item from the listing, so recreating it returns `409 ItemDisplayNameNotAvailableYet`.
 `notebook_utils.create_notebook()` retries on it.
+
+The storyline is visible in the deployed data without being told: `Black Friday Blast` runs at
+**3.90 sends per customer against 1.00** for the 19 other campaigns, and carries 247 unsubscribes.
+
+> ⚠️ The local `data/raw` CSVs are a **different draw** than what is in the Lakehouse
+> (981 at risk / 4.96 M€ locally). Re-running `generate_data.py` + the setup notebook will
+> move the report and the agent onto the local figures. Regenerate both together, never one alone.
 
 ### Curated views (created by the setup notebook)
 

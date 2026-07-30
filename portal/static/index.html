@@ -1,0 +1,1381 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Customer 360 — Pilotage de l'attrition</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/marked@14/marked.min.js"></script>
+
+<style>
+/* ═══════════════════════════════════════════════════════════
+   DESIGN SYSTEM — Glassmorphism + Inter + Animated Mesh
+   ═══════════════════════════════════════════════════════════ */
+:root, [data-theme="light"] {
+  --ten-navy: #201A3E;
+  --ten-navy-light: #322A5C;
+  --ten-green: #7C5CE6;
+  --ten-green-dark: #6242C9;
+  --ten-green-glow: rgba(124, 92, 230, 0.14);
+  --ten-green-soft: rgba(124, 92, 230, 0.07);
+  --bg-primary: #FFFFFF;
+  --bg-secondary: #F4F6FA;
+  --bg-card: rgba(255, 255, 255, 0.65);
+  --bg-card-solid: #FFFFFF;
+  --bg-chat: rgba(249, 250, 252, 0.85);
+  --bg-glass: rgba(255, 255, 255, 0.55);
+  --text-primary: #0F172A;
+  --text-secondary: #475569;
+  --text-muted: #94A3B8;
+  --border: rgba(226, 232, 240, 0.8);
+  --border-glass: rgba(255, 255, 255, 0.25);
+  --radius: 10px;
+  --radius-sm: 8px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.06);
+  --shadow-md: 0 4px 16px rgba(0,0,0,0.06), 0 2px 6px rgba(0,0,0,0.04);
+  --shadow-lg: 0 12px 40px rgba(0,0,0,0.08), 0 4px 12px rgba(0,0,0,0.04);
+  --shadow-xl: 0 20px 60px rgba(0,0,0,0.10);
+  --glass-blur: 20px;
+  --accent: var(--ten-green);
+  --accent-dark: var(--ten-green-dark);
+  --accent-glow: var(--ten-green-glow);
+  --accent-soft: var(--ten-green-soft);
+  --header-bg: rgba(11, 29, 50, 0.92);
+  --mesh-1: rgba(0, 200, 83, 0.07);
+  --mesh-2: rgba(56, 189, 248, 0.07);
+  --mesh-3: rgba(139, 92, 246, 0.05);
+}
+
+[data-theme="dark"] {
+  --ten-navy: #E2E8F0;
+  --ten-navy-light: #CBD5E1;
+  --bg-primary: #0F172A;
+  --bg-secondary: #1E293B;
+  --bg-card: rgba(30, 41, 59, 0.65);
+  --bg-card-solid: #1E293B;
+  --bg-chat: rgba(15, 23, 42, 0.85);
+  --bg-glass: rgba(30, 41, 59, 0.55);
+  --text-primary: #F1F5F9;
+  --text-secondary: #94A3B8;
+  --text-muted: #64748B;
+  --border: rgba(51, 65, 85, 0.8);
+  --border-glass: rgba(255, 255, 255, 0.08);
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.2);
+  --shadow-md: 0 4px 16px rgba(0,0,0,0.25);
+  --shadow-lg: 0 12px 40px rgba(0,0,0,0.3);
+  --shadow-xl: 0 20px 60px rgba(0,0,0,0.4);
+  --header-bg: rgba(15, 23, 42, 0.95);
+  --mesh-1: rgba(0, 200, 83, 0.04);
+  --mesh-2: rgba(56, 189, 248, 0.04);
+  --mesh-3: rgba(139, 92, 246, 0.03);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--bg-secondary); color: var(--text-primary);
+  height: 100vh; overflow: hidden; display: flex; flex-direction: column;
+  -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
+  transition: background 0.4s, color 0.4s;
+}
+
+/* ═══════════════ HEADER ═══════════════ */
+.header {
+  background: var(--header-bg);
+  backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+  padding: 0 28px; height: 60px;
+  display: flex; align-items: center; justify-content: space-between;
+  flex-shrink: 0; position: relative; z-index: 100;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+.header::after {
+  content: ''; position: absolute; bottom: -1px; left: 0; right: 0; height: 2px;
+  background: linear-gradient(90deg, var(--ten-green), #38BDF8, var(--ten-green));
+  background-size: 200% 100%; animation: shimmer 4s ease infinite;
+}
+@keyframes shimmer { 0%,100%{background-position:200% 0} 50%{background-position:0 0} }
+
+.header-brand { display: flex; align-items: center; gap: 12px; cursor: pointer; transition: opacity 0.2s; }
+.header-brand:hover { opacity: 0.85; }
+.logo-ten { flex-shrink: 0; }
+.header-brand h1 { font-size: 15px; font-weight: 700; color: #FFF; line-height: 1.2; letter-spacing: -0.2px; }
+.header-sub { font-size: 10.5px; color: rgba(255,255,255,0.45); font-weight: 500; letter-spacing: 0.8px; text-transform: uppercase; }
+
+.header-right { display: flex; align-items: center; gap: 10px; }
+.agent-badge {
+  display: none; align-items: center; gap: 8px;
+  background: rgba(255,255,255,0.06); padding: 5px 14px; border-radius: 24px;
+  border: 1px solid rgba(255,255,255,0.08); backdrop-filter: blur(10px);
+}
+.agent-badge .badge-dot {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
+  box-shadow: 0 0 8px var(--accent); animation: pulse-dot 2s infinite;
+}
+.agent-badge span { font-size: 12px; font-weight: 600; color: rgba(255,255,255,0.8); }
+
+.header-nav { display: flex; gap: 3px; }
+.header-nav button {
+  background: transparent; border: 1px solid transparent; color: rgba(255,255,255,0.55);
+  padding: 7px 14px; border-radius: var(--radius-sm); cursor: pointer;
+  font-size: 12px; font-weight: 600; font-family: inherit; transition: all 0.25s; letter-spacing: 0.2px;
+}
+.header-nav button:hover { background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.9); }
+.header-nav button.active { background: var(--accent); border-color: var(--accent); color: #FFF; box-shadow: 0 2px 12px rgba(0,200,83,0.3); }
+
+.btn-back {
+  display: none; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.08);
+  color: rgba(255,255,255,0.75); padding: 7px 14px; border-radius: var(--radius-sm);
+  cursor: pointer; font-size: 12px; font-weight: 600; font-family: inherit; transition: all 0.2s;
+}
+.btn-back:hover { background: rgba(255,255,255,0.12); color: #FFF; }
+
+/* Theme toggle */
+.theme-toggle {
+  background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.08);
+  color: rgba(255,255,255,0.7); width: 36px; height: 36px; border-radius: 50%;
+  cursor: pointer; font-size: 16px; display: flex; align-items: center; justify-content: center;
+  transition: all 0.3s; flex-shrink: 0;
+}
+.theme-toggle:hover { background: rgba(255,255,255,0.12); color: #FFF; transform: rotate(20deg); }
+
+/* ═══════════════ LANDING ═══════════════ */
+.landing {
+  flex: 1; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; padding: 0 48px 32px; gap: 28px; overflow-y: auto;
+  position: relative; background: var(--bg-secondary);
+}
+
+/* Animated mesh gradient blobs */
+.mesh-bg {
+  position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 0;
+}
+.mesh-blob {
+  position: absolute; border-radius: 50%; filter: blur(80px); opacity: 0.8;
+  animation: float 20s ease-in-out infinite;
+}
+.mesh-blob:nth-child(1) {
+  width: 500px; height: 500px; background: var(--mesh-1);
+  top: -10%; left: 10%; animation-duration: 22s;
+}
+.mesh-blob:nth-child(2) {
+  width: 400px; height: 400px; background: var(--mesh-2);
+  top: 40%; right: -5%; animation-duration: 18s; animation-delay: -5s;
+}
+.mesh-blob:nth-child(3) {
+  width: 350px; height: 350px; background: var(--mesh-3);
+  bottom: -5%; left: 30%; animation-duration: 25s; animation-delay: -10s;
+}
+@keyframes float {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  25% { transform: translate(30px, -40px) scale(1.05); }
+  50% { transform: translate(-20px, 20px) scale(0.95); }
+  75% { transform: translate(15px, 30px) scale(1.02); }
+}
+
+.landing-hero {
+  text-align: center; max-width: 680px; position: relative; z-index: 1;
+  animation: heroIn 0.8s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes heroIn { from { opacity: 0; transform: translateY(30px) scale(0.97); } to { opacity: 1; transform: none; } }
+
+.hero-badge {
+  display: inline-flex; align-items: center; gap: 8px;
+  background: var(--bg-glass); backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--border-glass); box-shadow: var(--shadow-sm);
+  padding: 6px 16px; border-radius: 24px; margin-bottom: 14px;
+  font-size: 11px; font-weight: 700; color: var(--ten-green); letter-spacing: 0.8px; text-transform: uppercase;
+}
+.hero-badge::before {
+  content: ''; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--ten-green); box-shadow: 0 0 8px var(--ten-green);
+  animation: pulse-dot 2s infinite;
+}
+@keyframes pulse-dot { 0%, 100% { opacity: 1; box-shadow: 0 0 8px var(--ten-green); } 50% { opacity: 0.5; box-shadow: 0 0 4px var(--ten-green); } }
+
+.landing-hero h2 {
+  font-size: 38px; font-weight: 800; color: var(--ten-navy); margin-bottom: 12px;
+  line-height: 1.1; letter-spacing: -1.2px;
+}
+.landing-hero h2 span {
+  background: linear-gradient(135deg, var(--ten-green), #38BDF8);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+}
+.landing-hero p { font-size: 15px; color: var(--text-secondary); line-height: 1.7; max-width: 520px; margin: 0 auto; font-weight: 400; }
+
+/* Stats */
+.landing-stats {
+  display: flex; gap: 8px; justify-content: center; position: relative; z-index: 1;
+  animation: heroIn 0.8s cubic-bezier(0.22, 1, 0.36, 1) 0.15s both;
+}
+.landing-stat {
+  text-align: center;
+  background: var(--bg-glass); backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--border-glass); border-radius: var(--radius-lg);
+  padding: 16px 28px; min-width: 120px;
+  box-shadow: var(--shadow-sm); transition: transform 0.3s, box-shadow 0.3s;
+}
+.landing-stat:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); }
+.stat-icon { font-size: 20px; margin-bottom: 6px; display: block; filter: grayscale(0.1); }
+.stat-value { font-size: 28px; font-weight: 800; color: var(--ten-navy); letter-spacing: -1.5px; font-variant-numeric: tabular-nums; }
+.stat-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; font-weight: 700; margin-top: 2px; }
+
+/* Agent Cards */
+.agent-cards {
+  display: flex; gap: 20px; flex-wrap: wrap; justify-content: center;
+  position: relative; z-index: 1;
+  animation: heroIn 0.8s cubic-bezier(0.22, 1, 0.36, 1) 0.3s both;
+}
+.agent-card {
+  background: var(--bg-glass); backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--border-glass); border-radius: var(--radius-xl);
+  padding: 28px 26px; width: 310px; cursor: pointer; transition: all 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+  box-shadow: var(--shadow-sm); position: relative; overflow: hidden;
+}
+.agent-card::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+  background: var(--card-accent, var(--ten-green)); opacity: 0; transition: opacity 0.3s;
+}
+.agent-card::after {
+  content: ''; position: absolute; inset: 0;
+  background: linear-gradient(135deg, transparent 40%, var(--card-accent, var(--ten-green)));
+  opacity: 0; transition: opacity 0.4s; pointer-events: none;
+}
+.agent-card:hover {
+  transform: translateY(-6px) scale(1.01);
+  box-shadow: var(--shadow-xl);
+  border-color: var(--card-accent, var(--ten-green));
+}
+.agent-card:hover::before { opacity: 1; }
+.agent-card:hover::after { opacity: 0.03; }
+
+.agent-card-header { display: flex; align-items: center; gap: 14px; margin-bottom: 12px; }
+.agent-card-icon {
+  width: 46px; height: 46px; border-radius: 14px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 22px; flex-shrink: 0; position: relative;
+}
+.agent-status {
+  position: absolute; bottom: -1px; right: -1px; width: 12px; height: 12px;
+  border-radius: 50%; background: #22C55E; border: 2.5px solid var(--bg-card-solid);
+  box-shadow: 0 0 6px rgba(34,197,94,0.4);
+}
+.agent-card h3 { font-size: 16px; font-weight: 700; color: var(--ten-navy); letter-spacing: -0.3px; line-height: 1.2; }
+.agent-card h3 + .agent-card-desc { margin-top: 0; }
+.agent-card-desc { font-size: 13px; color: var(--text-secondary); line-height: 1.5; margin-bottom: 14px; font-weight: 400; }
+.agent-card-pages { display: flex; flex-wrap: wrap; gap: 5px; }
+.agent-card-pages span {
+  background: var(--bg-secondary); padding: 4px 10px; border-radius: 6px;
+  font-size: 10px; color: var(--text-muted); font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+  transition: background 0.2s, color 0.2s;
+}
+.agent-card:hover .agent-card-pages span { background: var(--accent-soft); color: var(--accent-dark); }
+.agent-card-arrow {
+  position: absolute; right: 24px; bottom: 24px; font-size: 18px; color: var(--text-muted);
+  transition: all 0.35s; opacity: 0.5;
+}
+.agent-card:hover .agent-card-arrow { transform: translateX(6px); opacity: 1; color: var(--card-accent, var(--accent)); }
+
+/* ═══════════════ AGENT CONTEXT ═══════════════ */
+.agent-context { flex: 1 1 0; display: none; overflow: hidden; min-height: 0; }
+.agent-context.active { display: flex; animation: fadeIn 0.3s ease-out; }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+/* ═══════════════ CHAT ═══════════════ */
+.chat-panel {
+  display: flex; flex-direction: column;
+  background: var(--bg-chat); backdrop-filter: blur(10px);
+  border-right: 1px solid var(--border); transition: width 0.3s; height: 100%;
+}
+.chat-messages { flex: 1; overflow-y: auto; padding: 24px 20px; display: flex; flex-direction: column; gap: 16px; }
+
+.msg { display: flex; gap: 10px; max-width: 88%; animation: msgIn 0.35s cubic-bezier(0.22, 1, 0.36, 1); }
+@keyframes msgIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+.msg-user { align-self: flex-end; flex-direction: row-reverse; }
+
+.msg-avatar {
+  width: 32px; height: 32px; border-radius: 10px; display: flex; align-items: center;
+  justify-content: center; font-size: 14px; flex-shrink: 0;
+}
+.msg-assistant .msg-avatar { background: var(--accent-glow); border: 1.5px solid var(--accent); color: var(--accent); }
+.msg-user .msg-avatar { background: var(--ten-navy); color: white; font-size: 12px; border-radius: 10px; }
+
+.msg-content { display: flex; flex-direction: column; gap: 3px; }
+.msg-body {
+  background: var(--bg-glass); backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--border-glass); border-radius: var(--radius-lg);
+  padding: 14px 16px; font-size: 13.5px; line-height: 1.65; box-shadow: var(--shadow-sm);
+  color: var(--text-primary);
+}
+.msg-user .msg-body {
+  background: linear-gradient(135deg, var(--ten-navy), var(--ten-navy-light));
+  border-color: transparent; color: #FFF;
+}
+.msg-time {
+  font-size: 10px; color: var(--text-muted); font-weight: 500; padding: 0 4px;
+  letter-spacing: 0.3px;
+}
+.msg-user .msg-time { text-align: right; }
+
+.msg-body p { margin-bottom: 8px; }
+.msg-body p:last-child { margin-bottom: 0; }
+.msg-body code { background: var(--bg-secondary); padding: 2px 6px; border-radius: 4px; font-size: 12.5px; color: var(--ten-navy); }
+.msg-user .msg-body code { background: rgba(255,255,255,0.15); color: #FFF; }
+.msg-body pre { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px; overflow-x: auto; margin: 8px 0; font-size: 12.5px; }
+.msg-user .msg-body pre { background: rgba(0,0,0,0.2); border-color: rgba(255,255,255,0.1); }
+.msg-body table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 12.5px; }
+.msg-body th, .msg-body td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; }
+.msg-body th { background: var(--bg-secondary); font-weight: 700; color: var(--ten-navy); text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px; }
+.msg-body strong { color: var(--accent-dark); }
+.msg-user .msg-body strong { color: #7DEFA5; }
+
+.msg-steps { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 8px; }
+.step-tag {
+  background: var(--accent-glow); border: 1px solid rgba(0,0,0,0.04); padding: 3px 10px;
+  border-radius: 6px; font-size: 9px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.5px; color: var(--accent-dark);
+}
+
+/* ═══════════════ QUERY INSPECTOR ═══════════════ */
+.query-toggle {
+  background: var(--bg-secondary); border: 1px solid var(--border); color: var(--text-secondary);
+  padding: 4px 12px; border-radius: 14px; cursor: pointer; font-size: 10px; font-weight: 600;
+  font-family: inherit; margin-top: 8px; transition: all 0.25s; display: inline-flex; align-items: center; gap: 4px;
+}
+.query-toggle:hover { border-color: var(--accent); color: var(--accent-dark); background: var(--accent-soft); }
+.query-toggle .chevron { transition: transform 0.25s; display: inline-block; font-size: 8px; }
+.query-toggle.open .chevron { transform: rotate(90deg); }
+
+.query-inspector {
+  display: none; margin-top: 8px; border: 1px solid var(--border-glass);
+  border-radius: var(--radius); background: var(--bg-glass); backdrop-filter: blur(var(--glass-blur));
+  overflow: hidden; font-size: 12px;
+}
+.query-inspector.open { display: block; }
+
+.qi-step {
+  border-bottom: 1px solid var(--border); padding: 10px 14px;
+}
+.qi-step:last-child { border-bottom: none; }
+.qi-step-header {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
+}
+.qi-tool-badge {
+  background: var(--accent-glow); color: var(--accent-dark); font-size: 9px; font-weight: 700;
+  padding: 2px 8px; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.3px;
+}
+.qi-section-label {
+  font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+  color: var(--text-muted); margin: 6px 0 3px;
+}
+.qi-code-wrap {
+  position: relative; background: var(--bg-secondary); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); margin: 2px 0 6px;
+}
+.qi-code-wrap pre {
+  margin: 0; padding: 10px 12px; font-size: 11.5px; line-height: 1.5; overflow-x: auto;
+  white-space: pre-wrap; word-break: break-word; color: var(--text-primary); max-height: 200px; overflow-y: auto;
+}
+.qi-copy-btn {
+  position: absolute; top: 4px; right: 4px; background: var(--bg-card-solid); border: 1px solid var(--border);
+  color: var(--text-muted); padding: 2px 8px; border-radius: 4px; cursor: pointer;
+  font-size: 9px; font-weight: 600; font-family: inherit; opacity: 0; transition: opacity 0.2s;
+}
+.qi-code-wrap:hover .qi-copy-btn { opacity: 1; }
+.qi-copy-btn:hover { color: var(--accent-dark); border-color: var(--accent); }
+
+.qi-no-query {
+  display: inline-block; margin-top: 8px; font-size: 10px; color: var(--text-muted);
+  font-style: italic; font-weight: 500;
+}
+
+/* DAX syntax highlighting */
+.qi-code-wrap .kw { color: #0070C1; font-weight: 600; }
+.qi-code-wrap .fn { color: #795E26; }
+.qi-code-wrap .str { color: #A31515; }
+.qi-code-wrap .num { color: #098658; }
+
+/* ═══════════════ HISTORY SIDEBAR ═══════════════ */
+.history-btn {
+  background: var(--bg-glass); backdrop-filter: blur(10px); border: 1px solid var(--border-glass);
+  color: var(--text-secondary); padding: 8px 14px; border-radius: var(--radius); cursor: pointer;
+  font-size: 12px; font-weight: 600; font-family: inherit; transition: all 0.25s;
+  display: flex; align-items: center; gap: 6px;
+}
+.history-btn:hover { border-color: var(--accent); color: var(--accent-dark); background: var(--accent-soft); }
+
+/* ═══════════════ EXPLORE / DEEP-LINK BUTTONS ═══════════════ */
+.explore-bar {
+  display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; padding-top: 10px;
+  border-top: 1px dashed var(--border);
+}
+.explore-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: var(--bg-secondary); border: 1px solid var(--border);
+  color: var(--text-secondary); padding: 5px 10px; border-radius: 6px;
+  font-size: 11px; font-weight: 600; font-family: inherit; cursor: pointer;
+  transition: all 0.18s; text-decoration: none; white-space: nowrap;
+}
+.explore-btn:hover {
+  border-color: var(--card-accent, var(--accent));
+  color: var(--card-accent, var(--accent));
+  background: var(--bg-card-solid);
+  transform: translateY(-1px);
+}
+.explore-btn .ico { font-size: 13px; }
+.header-explore { display: flex; gap: 6px; margin-left: 6px; }
+.header-explore .explore-btn { padding: 6px 11px; font-size: 12px; }
+.health-badge { display: inline-flex; align-items: center; gap: 6px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); color: rgba(255,255,255,0.7); padding: 5px 10px; border-radius: 999px; font-size: 11px; cursor: pointer; margin-left: 6px; }
+.health-badge:hover { background: rgba(255,255,255,0.08); color: #fff; }
+.health-dot { width: 8px; height: 8px; border-radius: 50%; background: #888; display: inline-block; }
+.health-dot.ok { background: #00C853; box-shadow: 0 0 6px rgba(0,200,83,0.6); }
+.health-dot.refreshing { background: #FFB300; animation: pulse 1s infinite; }
+.health-dot.down { background: #E53935; box-shadow: 0 0 6px rgba(229,57,53,0.6); }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+/* ═══════════════ MCP MODAL ═══════════════ */
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.55); backdrop-filter: blur(6px);
+  z-index: 2000; display: none; align-items: center; justify-content: center;
+  opacity: 0; transition: opacity 0.2s;
+}
+.modal-overlay.open { display: flex; opacity: 1; }
+.modal-card {
+  background: var(--bg-card-solid); border: 1px solid var(--border); border-radius: 14px;
+  width: min(780px, 92vw); max-height: 86vh; display: flex; flex-direction: column;
+  box-shadow: 0 30px 80px rgba(0,0,0,0.45); overflow: hidden;
+}
+.modal-header {
+  padding: 18px 22px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between;
+}
+.modal-header h3 { margin: 0; font-size: 17px; font-weight: 700; color: var(--text-primary); }
+.modal-header .modal-sub { font-size: 12px; color: var(--text-secondary); margin-top: 3px; }
+.modal-close {
+  background: transparent; border: none; color: var(--text-secondary); font-size: 22px;
+  cursor: pointer; padding: 0 6px; line-height: 1;
+}
+.modal-close:hover { color: var(--text-primary); }
+.modal-tabs {
+  display: flex; gap: 2px; padding: 0 22px; border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+.modal-tab {
+  background: transparent; border: none; padding: 12px 16px; cursor: pointer;
+  font-size: 12px; font-weight: 600; color: var(--text-secondary); font-family: inherit;
+  border-bottom: 2px solid transparent; transition: all 0.18s;
+}
+.modal-tab:hover { color: var(--text-primary); }
+.modal-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.modal-body {
+  padding: 18px 22px; overflow: auto; flex: 1; min-height: 200px;
+}
+.modal-pane { display: none; }
+.modal-pane.active { display: block; }
+.modal-pane pre {
+  background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 8px;
+  padding: 14px 16px; font-size: 12px; line-height: 1.55; color: var(--text-primary);
+  overflow: auto; max-height: 52vh; margin: 0;
+  font-family: 'Cascadia Code', Consolas, monospace;
+}
+.modal-pane .hint { font-size: 12px; color: var(--text-secondary); margin: 0 0 10px 0; }
+.modal-actions {
+  padding: 12px 22px; border-top: 1px solid var(--border);
+  display: flex; justify-content: flex-end; gap: 8px;
+}
+.modal-btn {
+  background: var(--accent); border: none; color: white; padding: 8px 16px;
+  border-radius: 7px; font-size: 12px; font-weight: 600; cursor: pointer;
+  font-family: inherit; transition: all 0.18s;
+}
+.modal-btn:hover { filter: brightness(1.1); transform: translateY(-1px); }
+.modal-btn.secondary { background: var(--bg-secondary); color: var(--text-primary); border: 1px solid var(--border); }
+.copy-toast {
+  position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%);
+  background: var(--text-primary); color: var(--bg-card-solid);
+  padding: 10px 18px; border-radius: 8px; font-size: 13px; font-weight: 600;
+  z-index: 3000; opacity: 0; pointer-events: none; transition: opacity 0.25s;
+}
+.copy-toast.show { opacity: 1; }
+
+.history-overlay {
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.4);
+  backdrop-filter: blur(4px); z-index: 999; display: none; opacity: 0; transition: opacity 0.3s;
+}
+.history-overlay.open { display: block; opacity: 1; }
+
+.history-panel {
+  position: fixed; top: 0; right: -420px; width: 400px; max-width: 90vw; height: 100vh;
+  background: var(--bg-primary); border-left: 1px solid var(--border);
+  z-index: 1000; display: flex; flex-direction: column; transition: right 0.35s cubic-bezier(0.4,0,0.2,1);
+  box-shadow: -8px 0 32px rgba(0,0,0,0.15);
+}
+.history-panel.open { right: 0; }
+
+.history-header {
+  display: flex; align-items: center; justify-content: space-between; padding: 16px 20px;
+  border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+.history-header h3 { font-size: 15px; font-weight: 700; color: var(--text-primary); margin: 0; }
+.history-header-actions { display: flex; gap: 8px; }
+.history-close, .history-clear {
+  background: var(--bg-secondary); border: 1px solid var(--border); color: var(--text-secondary);
+  padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 11px; font-weight: 600; font-family: inherit;
+  transition: all 0.2s;
+}
+.history-close:hover { color: var(--text-primary); }
+.history-clear:hover { color: #E53E3E; border-color: #E53E3E; }
+
+.history-filter {
+  padding: 10px 20px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+.history-filter select {
+  width: 100%; background: var(--bg-secondary); border: 1px solid var(--border); color: var(--text-primary);
+  padding: 7px 10px; border-radius: 6px; font-size: 12px; font-family: inherit;
+}
+
+.history-list {
+  flex: 1; overflow-y: auto; padding: 10px;
+}
+.history-item {
+  background: var(--bg-glass); backdrop-filter: blur(8px); border: 1px solid var(--border-glass);
+  border-radius: var(--radius); padding: 12px 14px; margin-bottom: 8px; cursor: pointer;
+  transition: all 0.2s;
+}
+.history-item:hover { border-color: var(--accent); box-shadow: var(--shadow-md); transform: translateY(-1px); }
+.history-item-header {
+  display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;
+}
+.history-item-agent {
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.3px;
+  color: var(--accent-dark); background: var(--accent-glow); padding: 2px 8px; border-radius: 4px;
+}
+.history-item-time { font-size: 10px; color: var(--text-muted); }
+.history-item-question {
+  font-size: 12.5px; font-weight: 600; color: var(--text-primary); margin-bottom: 4px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.history-item-answer {
+  font-size: 11.5px; color: var(--text-secondary); line-height: 1.5;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.history-item-steps {
+  display: flex; gap: 3px; flex-wrap: wrap; margin-top: 6px;
+}
+.history-empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  height: 200px; color: var(--text-muted); font-size: 13px; gap: 8px;
+}
+
+.typing { display: flex; gap: 5px; padding: 16px !important; align-items: center; }
+.typing span { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: bounce 1.4s infinite both; }
+.typing span:nth-child(2) { animation-delay: 0.2s; }
+.typing span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes bounce { 0%, 80%, 100% { transform: scale(0.5); opacity: 0.3; } 40% { transform: scale(1); opacity: 1; } }
+
+.suggestions { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 20px 12px; }
+.suggestions button {
+  background: var(--bg-glass); backdrop-filter: blur(10px);
+  border: 1px solid var(--border-glass); color: var(--text-secondary);
+  padding: 7px 14px; border-radius: 20px; cursor: pointer; font-size: 11.5px; font-weight: 500;
+  font-family: inherit; transition: all 0.25s; box-shadow: var(--shadow-sm);
+}
+.suggestions button:hover {
+  border-color: var(--accent); color: var(--accent-dark);
+  background: var(--accent-soft); box-shadow: var(--shadow-md); transform: translateY(-1px);
+}
+
+.chat-input {
+  padding: 14px 20px; border-top: 1px solid var(--border); display: flex; gap: 8px;
+  background: var(--bg-primary);
+}
+.chat-input input {
+  flex: 1; background: var(--bg-secondary); border: 1.5px solid var(--border); color: var(--text-primary);
+  padding: 11px 16px; border-radius: var(--radius); font-size: 13.5px; font-family: inherit; outline: none;
+  transition: all 0.25s;
+}
+.chat-input input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); background: var(--bg-primary); }
+.chat-input input::placeholder { color: var(--text-muted); }
+.chat-input button {
+  background: linear-gradient(135deg, var(--accent), var(--accent-dark));
+  border: none; color: white; width: 44px; height: 44px;
+  border-radius: var(--radius); font-size: 16px; cursor: pointer; transition: all 0.25s;
+  box-shadow: 0 2px 8px rgba(0,200,83,0.25); display: flex; align-items: center; justify-content: center;
+}
+.chat-input button:disabled { opacity: 0.35; cursor: not-allowed; box-shadow: none; }
+.chat-input button:hover:not(:disabled) { box-shadow: 0 4px 16px rgba(0,200,83,0.35); transform: translateY(-1px); }
+
+/* ═══════════════ REPORT ═══════════════ */
+.report-panel { display: flex; flex-direction: column; background: var(--bg-primary); transition: width 0.3s; height: 100%; }
+.report-container { flex: 1; width: 100%; height: 100%; }
+.report-container iframe { border: none !important; }
+.report-fallback {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  height: 100%; color: var(--text-secondary); gap: 14px; text-align: center; padding: 40px;
+}
+.report-fallback .fallback-icon {
+  width: 60px; height: 60px; background: var(--accent-glow); border-radius: 16px;
+  display: flex; align-items: center; justify-content: center; font-size: 26px; margin-bottom: 8px;
+}
+.report-fallback h3 { font-size: 18px; font-weight: 700; color: var(--ten-navy); }
+.report-fallback p { font-size: 13px; color: var(--text-muted); }
+
+.report-page-tabs {
+  display: flex; gap: 3px; padding: 8px 14px; background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border); overflow-x: auto; flex-shrink: 0;
+}
+.report-page-tabs button {
+  background: transparent; border: 1px solid transparent; color: var(--text-secondary);
+  padding: 6px 14px; border-radius: var(--radius-sm); cursor: pointer;
+  font-size: 11.5px; font-weight: 600; font-family: inherit; transition: all 0.2s; white-space: nowrap;
+}
+.report-page-tabs button:hover { background: var(--bg-card-solid); color: var(--text-primary); }
+.report-page-tabs button.active { background: var(--accent); color: white; border-color: var(--accent); box-shadow: 0 2px 8px rgba(0,200,83,0.2); }
+
+/* ═══════════════ VIEWS ═══════════════ */
+.view-split .chat-panel { width: 50%; }
+.view-split .report-panel { width: 50%; }
+.view-chat .chat-panel { width: 100%; }
+.view-chat .report-panel { display: none; }
+.view-report .chat-panel { display: none; }
+.view-report .report-panel { width: 100%; }
+
+/* ═══════════════ SCROLLBARS ═══════════════ */
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(148,163,184,0.3); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(148,163,184,0.5); }
+
+/* ═══════════════ TRANSITIONS ═══════════════ */
+.landing-stat, .agent-card, .msg-body, .suggestions button, .chat-input input, .report-page-tabs button,
+.header-nav button, .btn-back, .agent-badge, .theme-toggle { transition-property: all; }
+
+</style>
+</head>
+<body>
+
+<!-- ═══════════════ HEADER ═══════════════ -->
+<header class="header">
+  <div class="header-brand" onclick="goHome()">
+    <svg class="logo-ten" width="38" height="38" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="tenGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#00008F"/>
+          <stop offset="50%" stop-color="#027180"/>
+          <stop offset="100%" stop-color="#00008F"/>
+        </linearGradient>
+      </defs>
+      <circle cx="50" cy="50" r="48" fill="url(#tenGrad)"/>
+      <text x="50" y="58" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="24" font-weight="800" fill="white" letter-spacing="-1">C360</text>
+    </svg>
+    <div>
+      <h1>Customer 360</h1>
+      <span class="header-sub">Marketing Campaign &mdash; Pilotage de l'attrition</span>
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="agent-badge" id="agentBadge">
+      <div class="badge-dot"></div>
+      <span id="agentBadgeName"></span>
+    </div>
+    <button class="btn-back" id="btnBack" onclick="goHome()">&#8592; Modules</button>
+    <nav class="header-nav" id="headerNav" style="display:none;">
+      <button data-view="chat" onclick="setView('chat')">&#128172; Chat</button>
+      <button data-view="report" onclick="setView('report')">&#128202; Report</button>
+      <button data-view="split" onclick="setView('split')" class="active">&#9638; Split</button>
+    </nav>
+    <div class="header-explore" id="headerExplore" style="display:none;"></div>
+    <button class="health-badge" id="healthBadge" onclick="manualTokenRefresh()" title="API health — click to force-refresh tokens">
+      <span class="health-dot ok" id="healthDot"></span>
+      <span id="healthText">checking…</span>
+    </button>
+    <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="Toggle dark/light mode">&#9790;</button>
+    <button class="history-btn" onclick="openHistory()" title="Query History">&#128218; History</button>
+  </div>
+</header>
+
+<!-- ═══════════════ LANDING ═══════════════ -->
+<div class="landing" id="landingPage">
+  <div class="mesh-bg">
+    <div class="mesh-blob"></div>
+    <div class="mesh-blob"></div>
+    <div class="mesh-blob"></div>
+  </div>
+
+  <div class="landing-hero">
+    <div class="hero-badge">Customer 360 &middot; Fabric</div>
+    <h2>Vos clients partent.<br><span>Trouvez pourquoi.</span></h2>
+    <p>Interrogez vos agents IA sur l'attrition, la pression email, l'engagement et le chiffre d'affaires &mdash; en langage naturel, sur toute la base client.</p>
+  </div>
+
+  <div class="landing-stats">
+    <div class="landing-stat">
+      <span class="stat-icon">&#128101;</span>
+      <div class="stat-value" id="statCustomers">0</div>
+      <div class="stat-label">Clients</div>
+    </div>
+    <div class="landing-stat">
+      <span class="stat-icon">&#128233;</span>
+      <div class="stat-value" id="statCampaigns">0</div>
+      <div class="stat-label">Campagnes</div>
+    </div>
+    <div class="landing-stat">
+      <span class="stat-icon">&#127991;</span>
+      <div class="stat-value" id="statSegments">0</div>
+      <div class="stat-label">Segments</div>
+    </div>
+    <div class="landing-stat">
+      <span class="stat-icon">&#129302;</span>
+      <div class="stat-value" id="statAgents">4</div>
+      <div class="stat-label">Personas IA</div>
+    </div>
+    <div class="landing-stat">
+      <span class="stat-icon">&#128196;</span>
+      <div class="stat-value" id="statPages">4</div>
+      <div class="stat-label">Pages Rapport</div>
+    </div>
+  </div>
+
+  <div class="agent-cards" id="agentCards"></div>
+</div>
+
+<!-- ═══════════════ AGENT CONTEXTS ═══════════════ -->
+<div id="agentContexts" style="flex:1 1 0;min-height:0;display:none;flex-direction:column;"></div>
+
+<!-- ═══════════════ HISTORY PANEL ═══════════════ -->
+<div class="history-overlay" id="historyOverlay" onclick="closeHistory()"></div>
+<div class="history-panel" id="historyPanel">
+  <div class="history-header">
+    <h3>&#128218; Query History</h3>
+    <div class="history-header-actions">
+      <button class="history-clear" onclick="clearHistory()">Clear All</button>
+      <button class="history-close" onclick="closeHistory()">&#10005;</button>
+    </div>
+  </div>
+  <div class="history-filter">
+    <select id="historyAgentFilter" onchange="renderHistory()">
+      <option value="">All Agents</option>
+    </select>
+  </div>
+  <div class="history-list" id="historyList"></div>
+</div>
+
+<!-- ═══════════════ MCP CONNECT MODAL ═══════════════ -->
+<div class="modal-overlay" id="mcpModal" onclick="if(event.target===this)closeMcpModal()">
+  <div class="modal-card">
+    <div class="modal-header">
+      <div>
+        <h3 id="mcpModalTitle">MCP Connect</h3>
+        <div class="modal-sub" id="mcpModalSub"></div>
+      </div>
+      <button class="modal-close" onclick="closeMcpModal()" title="Close">&times;</button>
+    </div>
+    <div class="modal-tabs">
+      <button class="modal-tab active" id="mcpTab-json" onclick="setMcpTab('json')">Connection JSON</button>
+      <button class="modal-tab" id="mcpTab-python" onclick="setMcpTab('python')">Python snippet</button>
+      <button class="modal-tab" id="mcpTab-mcp" onclick="setMcpTab('mcp')">MCP server config</button>
+      <button class="modal-tab" id="mcpTab-perms" onclick="setMcpTab('perms')">Permissions</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-pane active" id="mcpPane-json"><p class="hint">Generic connection metadata for any client. Contains tenant / workspace / agent IDs and the OpenAI-Assistants endpoint.</p><pre id="mcpPaneJson"></pre></div>
+      <div class="modal-pane" id="mcpPane-python"><p class="hint">Minimal Python example using <code>azure-identity</code> + <code>httpx</code> (same auth pattern as this portal).</p><pre id="mcpPanePython"></pre></div>
+      <div class="modal-pane" id="mcpPane-mcp"><p class="hint">Drop this into <code>claude_desktop_config.json</code>, <code>.vscode/mcp.json</code>, or any MCP-aware client.</p><pre id="mcpPaneMcp"></pre></div>
+      <div class="modal-pane" id="mcpPane-perms"><p class="hint">Identity prerequisites to call the Data Agent + semantic model.</p><pre id="mcpPanePerms"></pre></div>
+    </div>
+    <div class="modal-actions">
+      <button class="modal-btn secondary" onclick="closeMcpModal()">Close</button>
+      <button class="modal-btn" onclick="mcpCopy()">Copy current tab</button>
+    </div>
+  </div>
+</div>
+<div class="copy-toast" id="copyToast">Copied to clipboard</div>
+
+<script src="https://cdn.jsdelivr.net/npm/powerbi-client@2.23.1/dist/powerbi.min.js"></script>
+<script>
+/* ═══════════════ STATE ═══════════════ */
+var agents={},activeAgent=null,embedData=null,agentReports={};
+
+function escHtml(s){var d=document.createElement('div');d.textContent=s;return d.innerHTML;}
+function timeNow(){var d=new Date();return d.getHours().toString().padStart(2,'0')+':'+d.getMinutes().toString().padStart(2,'0');}
+
+/* ═══════════════ THEME ═══════════════ */
+function toggleTheme(){
+  var html=document.documentElement;
+  var next=html.getAttribute('data-theme')==='dark'?'light':'dark';
+  html.setAttribute('data-theme',next);
+  document.getElementById('themeToggle').innerHTML=next==='dark'?'&#9728;':'&#9790;';
+  try{localStorage.setItem('fp-theme',next);}catch(e){}
+}
+(function(){
+  try{var saved=localStorage.getItem('fp-theme');if(saved){document.documentElement.setAttribute('data-theme',saved);if(saved==='dark')document.getElementById('themeToggle').innerHTML='&#9728;';}}catch(e){}
+})();
+
+/* ═══════════════ KEYBOARD SHORTCUTS ═══════════════ */
+document.addEventListener('keydown',function(e){
+  if(e.key==='Escape'){goHome();return;}
+  if(!activeAgent)return;
+  if(e.ctrlKey&&e.key==='1'){e.preventDefault();setView('chat');}
+  if(e.ctrlKey&&e.key==='2'){e.preventDefault();setView('report');}
+  if(e.ctrlKey&&e.key==='3'){e.preventDefault();setView('split');}
+});
+
+/* ═══════════════ INIT ═══════════════ */
+async function init(){
+  try{
+    var r=await fetch('/api/agents');agents=await r.json();
+    var keys=Object.keys(agents).filter(function(k){return k!=='_meta';});
+    var sa=document.getElementById('statAgents');if(sa)sa.textContent=keys.length;
+    var totalPages=keys.reduce(function(n,k){return n+(agents[k].reportPages||[]).length;},0);
+    var sp=document.getElementById('statPages');if(sp)sp.textContent=totalPages;
+    // Volumes come from the generator config via _meta.demo, so the landing page
+    // can never advertise a dataset size that was never generated.
+    var demo=(agents._meta&&agents._meta.demo)||{};
+    [['statCustomers','customers'],['statCampaigns','campaigns'],['statSegments','segments']]
+      .forEach(function(pair){
+        var el=document.getElementById(pair[0]);
+        if(el&&demo[pair[1]])el.textContent=demo[pair[1]];
+      });
+    renderCards();animateCounters();
+  }catch(e){console.error('Init failed:',e);}
+  refreshHealth();
+}
+
+/* ═══════════════ ANIMATED COUNTERS ═══════════════ */
+function animateCounters(){
+  document.querySelectorAll('.stat-value').forEach(function(el,i){
+    var target=parseInt(el.textContent,10);if(isNaN(target))return;
+    var duration=1400,startTime=null;
+    el.textContent='0';
+    function step(ts){
+      if(!startTime)startTime=ts;
+      var progress=Math.min((ts-startTime)/duration,1);
+      var eased=1-Math.pow(1-progress,4);
+      el.textContent=Math.round(eased*target);
+      if(progress<1)requestAnimationFrame(step);
+    }
+    setTimeout(function(){requestAnimationFrame(step);},200+i*100);
+  });
+}
+
+/* ═══════════════ RENDER CARDS ═══════════════ */
+function renderCards(){
+  var c=document.getElementById('agentCards');c.innerHTML='';
+  Object.keys(agents).filter(function(k){return k!=='_meta';}).forEach(function(key,idx){
+    var cfg=agents[key],card=document.createElement('div');
+    card.className='agent-card';card.style.setProperty('--card-accent',cfg.accent);
+    card.style.animationDelay=(0.3+idx*0.1)+'s';
+    card.innerHTML=
+      '<div class="agent-card-header">'+
+        '<div class="agent-card-icon" style="background:'+cfg.accent+'15;color:'+cfg.accent+';">'+
+          cfg.icon+'<div class="agent-status"></div>'+
+        '</div>'+
+        '<h3>'+escHtml(cfg.name)+'</h3>'+
+      '</div>'+
+      '<p class="agent-card-desc">'+escHtml(cfg.description)+'</p>'+
+      '<div class="agent-card-pages">'+cfg.reportPages.map(function(p){return '<span>'+escHtml(p)+'</span>';}).join('')+'</div>'+
+      buildExploreBar(key)+
+      '<div class="agent-card-arrow">&rarr;</div>';
+    card.setAttribute('data-key',key);
+    card.onclick=function(ev){
+      // Ignore clicks on explore buttons
+      if(ev.target.closest('.explore-btn'))return;
+      enterAgent(this.getAttribute('data-key'));
+    };
+    c.appendChild(card);
+  });
+}
+
+/* ═══════════════ DEEP-LINK BUILDERS ═══════════════ */
+function fabricMeta(){return agents._meta||{tenantId:'',workspaceId:'',ontologyId:''};}
+function buildAgentUrl(cfg){
+  var m=fabricMeta();
+  return 'https://app.fabric.microsoft.com/groups/'+m.workspaceId+
+         '/aiskills/'+cfg.agentId+'?experience=fabric-developer&ctid='+m.tenantId;
+}
+function buildReportUrl(cfg){
+  var m=fabricMeta();var rep=(cfg.reports&&cfg.reports[0])||{};
+  if(!rep.id)return null;
+  return 'https://app.powerbi.com/groups/'+m.workspaceId+'/reports/'+rep.id+
+         '?ctid='+m.tenantId+'&experience=power-bi&openCopilotPane=true';
+}
+function buildDatasetUrl(cfg){
+  var m=fabricMeta();var ds=(cfg.datasets&&cfg.datasets[0])||{};
+  if(!ds.id)return null;
+  return 'https://app.fabric.microsoft.com/groups/'+m.workspaceId+'/datasets/'+ds.id+
+         '?experience=power-bi&ctid='+m.tenantId;
+}
+function buildExploreBar(key){
+  // Explore buttons (Agent / Report+Copilot / Model / MCP) removed per request.
+  return '';
+}
+
+/* ═══════════════ NAVIGATION ═══════════════ */
+function enterAgent(key){
+  var cfg=agents[key];if(!cfg)return;activeAgent=key;
+  document.documentElement.style.setProperty('--accent',cfg.accent);
+  document.documentElement.style.setProperty('--accent-dark',cfg.accent);
+  document.documentElement.style.setProperty('--accent-glow',cfg.accent+'1A');
+  document.documentElement.style.setProperty('--accent-soft',cfg.accent+'0D');
+  ensureCtx(key);
+  document.getElementById('landingPage').style.display='none';
+  document.getElementById('agentContexts').style.display='flex';
+  document.querySelectorAll('.agent-context').forEach(function(el){el.classList.remove('active');});
+  document.getElementById('ctx-'+key).classList.add('active');
+  document.getElementById('headerNav').style.display='flex';
+  var hx=document.getElementById('headerExplore');
+  hx.innerHTML=buildExploreBar(key);
+  hx.style.display='flex';
+  document.getElementById('btnBack').style.display='inline-block';
+  document.getElementById('agentBadge').style.display='flex';
+  document.getElementById('agentBadgeName').textContent=cfg.name;
+  setView('split');loadReportForAgent(key);
+}
+
+function goHome(){
+  activeAgent=null;
+  document.getElementById('landingPage').style.display='';
+  document.getElementById('agentContexts').style.display='none';
+  document.querySelectorAll('.agent-context').forEach(function(el){el.classList.remove('active');});
+  document.getElementById('headerNav').style.display='none';
+  var hx2=document.getElementById('headerExplore');hx2.style.display='none';hx2.innerHTML='';
+  document.getElementById('btnBack').style.display='none';
+  document.getElementById('agentBadge').style.display='none';
+  ['--accent','--accent-dark','--accent-glow','--accent-soft'].forEach(function(p){document.documentElement.style.removeProperty(p);});
+}
+
+/* ═══════════════ CHAT CONTEXT ═══════════════ */
+function ensureCtx(key){
+  if(document.getElementById('ctx-'+key))return;
+  var cfg=agents[key],ctx=document.createElement('div');
+  ctx.className='agent-context';ctx.id='ctx-'+key;
+  var sugHtml=cfg.suggestions.map(function(s){
+    return '<button onclick="useSug(\''+key+'\',this)">'+escHtml(s)+'</button>';
+  }).join('');
+  ctx.innerHTML=
+    '<div class="chat-panel" id="chat-'+key+'">'+
+      '<div class="chat-messages" id="msgs-'+key+'">'+
+        '<div class="msg msg-assistant"><div class="msg-avatar">'+cfg.icon+'</div>'+
+        '<div class="msg-content"><div class="msg-body">'+
+        (cfg.welcome?('<p>'+escHtml(cfg.welcome)+'</p>'):('<p>Bonjour, je suis <strong>'+escHtml(cfg.name)+'</strong> &mdash; '+escHtml(cfg.description).toLowerCase()+'.</p>'))+
+        '<p>Posez-moi votre question, ou choisissez une suggestion ci-dessous.</p></div>'+
+        '<div class="msg-time">'+timeNow()+'</div></div></div></div>'+
+      '<div class="suggestions" id="sug-'+key+'">'+sugHtml+'</div>'+
+      '<div class="chat-input"><input type="text" id="input-'+key+'" placeholder="Posez votre question à '+escHtml(cfg.name)+'\u2026" onkeydown="if(event.key===\'Enter\')sendMsg(\''+key+'\')">'+
+        '<button onclick="sendMsg(\''+key+'\')" id="send-'+key+'">&#10148;</button></div>'+
+    '</div>'+
+    '<div class="report-panel" id="report-'+key+'">'+
+      '<div class="report-page-tabs" id="tabs-'+key+'"></div>'+
+      '<div class="report-fallback" id="fallback-'+key+'"><div class="fallback-icon">'+cfg.icon+'</div>'+
+        '<h3>'+escHtml(cfg.name)+' &mdash; Report</h3><p>Loading report...</p></div>'+
+      '<div class="report-container" id="pbi-'+key+'" style="display:none;"></div>'+
+    '</div>';
+  document.getElementById('agentContexts').appendChild(ctx);
+}
+
+function setView(mode){
+  if(!activeAgent)return;
+  document.getElementById('ctx-'+activeAgent).className='agent-context active view-'+mode;
+  document.querySelectorAll('.header-nav button').forEach(function(b){
+    b.classList.toggle('active',b.getAttribute('data-view')===mode);
+  });
+}
+
+/* ═══════════════ MESSAGES ═══════════════ */
+function highlightDax(code){
+  var kws='EVALUATE|SUMMARIZE|SUMMARIZECOLUMNS|FILTER|CALCULATE|CALCULATETABLE|ALL|ALLSELECTED|VALUES|DISTINCT|TOPN|ORDER BY|ASC|DESC|ADDCOLUMNS|SELECTCOLUMNS|VAR|RETURN|DEFINE|MEASURE|IF|SWITCH|TRUE|FALSE|BLANK|NOT|AND|OR|IN|RELATED|RELATEDTABLE|KEEPFILTERS|REMOVEFILTERS|AVERAGE|SUM|MIN|MAX|COUNT|COUNTROWS|DIVIDE|FORMAT|YEAR|MONTH|DAY|DATE|TODAY|NOW|EARLIER|EARLIEST|HASONEVALUE|SELECTEDVALUE|ISBLANK|CONCATENATEX|UNICHAR';
+  var escaped=code.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  escaped=escaped.replace(/"([^"]*)"/g,'<span class="str">"$1"</span>');
+  escaped=escaped.replace(/\b(\d+(?:\.\d+)?)\b/g,'<span class="num">$1</span>');
+  var kwRe=new RegExp('\\b('+kws+')\\b','gi');
+  escaped=escaped.replace(kwRe,'<span class="kw">$1</span>');
+  return escaped;
+}
+function extractDaxFromMarkdown(text){
+  // nl2code output is markdown: "# Variation 1\n\n```dax\n...code...\n```"
+  var m=text.match(/```(?:dax)?\s*\n([\s\S]*?)```/);
+  if(m)return m[1].trim();
+  // Maybe it's raw DAX already
+  if(/EVALUATE|DEFINE|SUMMARIZE/i.test(text))return text.trim();
+  return null;
+}
+function buildInspector(queryTrace){
+  if(!queryTrace||!queryTrace.length)return '';
+  var dax=null;
+  // 1. Find nl2code step and extract DAX from its output
+  queryTrace.forEach(function(t){
+    if(dax)return;
+    if(t.tool&&t.tool.toLowerCase().indexOf('nl2code')>=0){
+      if(t.output){dax=extractDaxFromMarkdown(t.output);}
+      if(!dax&&t.arguments){dax=extractDaxFromMarkdown(t.arguments);}
+    }
+  });
+  // 2. Fallback: any step with a DAX code block
+  if(!dax){
+    queryTrace.forEach(function(t){
+      if(dax)return;
+      if(/fewshot|loading/i.test(t.tool||''))return;
+      if(t.output){dax=extractDaxFromMarkdown(t.output);}
+      if(!dax&&t.arguments){dax=extractDaxFromMarkdown(t.arguments);}
+    });
+  }
+  if(!dax)return '<span class="qi-no-query">Answered from cache — no DAX query generated</span>';
+  var html='<button class="query-toggle" onclick="toggleInspector(this)"><span class="chevron">&#9654;</span> Show DAX Query</button>';
+  html+='<div class="query-inspector"><div class="qi-step">';
+  html+='<div class="qi-code-wrap"><button class="qi-copy-btn" onclick="copyQiCode(this)">Copy</button><pre>'+highlightDax(dax)+'</pre></div>';
+  html+='</div></div>';
+  return html;
+}
+function toggleInspector(btn){
+  btn.classList.toggle('open');
+  var panel=btn.nextElementSibling;
+  panel.classList.toggle('open');
+}
+function copyQiCode(btn){
+  var pre=btn.parentElement.querySelector('pre');
+  var text=pre.textContent||pre.innerText;
+  navigator.clipboard.writeText(text).then(function(){
+    btn.textContent='Copied!';setTimeout(function(){btn.textContent='Copy';},1500);
+  });
+}
+
+function addMsg(key,role,content,steps,queryTrace){
+  var c=document.getElementById('msgs-'+key),cfg=agents[key];
+  var div=document.createElement('div');div.className='msg msg-'+role;
+  var av=role==='user'?'&#128100;':cfg.icon;
+  var html=typeof marked!=='undefined'?marked.parse(content):content.replace(/\n/g,'<br>');
+  var sh='';
+  var visibleSteps=['analyze.database.nl2code','analyze.database.execute'];
+  if(steps&&steps.length){
+    var filtered=steps.filter(function(s){return visibleSteps.indexOf(s)>=0;});
+    if(filtered.length)sh='<div class="msg-steps">'+filtered.map(function(s){
+      var label=s.replace('analyze.database.','').toUpperCase();
+      return '<span class="step-tag">'+escHtml(label)+'</span>';
+    }).join('')+'</div>';
+  }
+  var qi=role==='assistant'?buildInspector(queryTrace):'';
+  div.innerHTML='<div class="msg-avatar">'+av+'</div><div class="msg-content"><div class="msg-body">'+html+sh+qi+'</div><div class="msg-time">'+timeNow()+'</div></div>';
+  c.appendChild(div);c.scrollTop=c.scrollHeight;
+}
+
+function showTyping(key){
+  var c=document.getElementById('msgs-'+key),cfg=agents[key];
+  var div=document.createElement('div');div.className='msg msg-assistant';div.id='typing-'+key;
+  div.innerHTML='<div class="msg-avatar">'+cfg.icon+'</div><div class="msg-content"><div class="msg-body typing"><span></span><span></span><span></span></div></div>';
+  c.appendChild(div);c.scrollTop=c.scrollHeight;
+}
+function hideTyping(key){var el=document.getElementById('typing-'+key);if(el)el.remove();}
+function useSug(key,btn){document.getElementById('input-'+key).value=btn.textContent;sendMsg(key);}
+
+async function sendMsg(key){
+  var input=document.getElementById('input-'+key),q=input.value.trim();
+  if(!q)return;input.value='';
+  document.getElementById('send-'+key).disabled=true;
+  document.getElementById('sug-'+key).style.display='none';
+  addMsg(key,'user',q);showTyping(key);
+  try{
+    var r=await chatFetchWithRetry(key,q);
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    var d=await r.json();hideTyping(key);addMsg(key,'assistant',d.answer,d.steps,d.queryTrace);
+    saveToHistory(key,q,d);
+    var sugBox=document.getElementById('sug-'+key);
+    if(d.followUps && d.followUps.length>0){
+      sugBox.innerHTML=d.followUps.map(function(s){
+        return '<button onclick="useSug(\''+key+'\',this)">'+escHtml(s)+'</button>';
+      }).join('');
+      sugBox.style.display='flex';
+    }
+  }catch(e){hideTyping(key);addMsg(key,'assistant','&#10060; Error: '+escHtml(e.message));}
+  document.getElementById('send-'+key).disabled=false;
+}
+
+/* ═══════════════ HEALTH / TOKEN AUTO-RECOVERY ═══════════════ */
+async function chatFetchWithRetry(key,q){
+  var url='/api/agents/'+encodeURIComponent(key)+'/chat';
+  var opts={method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:q})};
+  var r=await fetch(url,opts);
+  if(r.status===502 || r.status===401 || r.status===503){
+    setHealth('refreshing');
+    try{await fetch('/api/admin/refresh-tokens',{method:'POST'});}catch(_){}
+    r=await fetch(url,opts);  // one retry after token refresh
+  }
+  refreshHealth();
+  return r;
+}
+function setHealth(state){
+  var el=document.getElementById('healthDot');if(!el)return;
+  el.className='health-dot '+state;
+  el.title={ok:'API healthy',refreshing:'Refreshing tokens…',down:'API unhealthy — click to refresh tokens'}[state]||'';
+}
+async function refreshHealth(){
+  try{
+    var r=await fetch('/api/health');var d=await r.json();
+    setHealth(d.ok?'ok':'down');
+    var t=document.getElementById('healthText');
+    if(t && d.tokens){
+      var f=d.tokens.fabric,p=d.tokens.powerbi;
+      var fmin=f&&f.expires_in_s?Math.max(0,Math.floor(f.expires_in_s/60)):'?';
+      var pmin=p&&p.expires_in_s?Math.max(0,Math.floor(p.expires_in_s/60)):'?';
+      t.textContent='Fabric '+fmin+'m · PBI '+pmin+'m';
+    }
+  }catch(_){setHealth('down');}
+}
+async function manualTokenRefresh(){
+  setHealth('refreshing');
+  try{await fetch('/api/admin/refresh-tokens',{method:'POST'});}catch(_){}
+  await refreshHealth();
+}
+setInterval(refreshHealth,60000);  // poll every minute
+
+/* ═══════════════ REPORT EMBED ═══════════════ */
+async function loadReportForAgent(key){
+  if(agentReports[key])return;
+  var cfg=agents[key],fb=document.getElementById('fallback-'+key),
+      co=document.getElementById('pbi-'+key),tabs=document.getElementById('tabs-'+key);
+  try{
+    if(!embedData){var r=await fetch('/api/embed-token');if(!r.ok)throw new Error('HTTP '+r.status);embedData=await r.json();}
+    fb.style.display='none';co.style.display='block';
+    var models=window['powerbi-client'].models;
+    var tt=embedData.tokenType==='Aad'?models.TokenType.Aad:models.TokenType.Embed;
+    var report=window.powerbi.embed(co,{
+      type:'report',id:embedData.reportId,embedUrl:embedData.embedUrl,
+      accessToken:embedData.token,tokenType:tt,
+      settings:{
+        panes:{filters:{visible:false},pageNavigation:{visible:false}},
+        bars:{statusBar:{visible:false}},
+        background:models.BackgroundType.Transparent
+      }
+    });
+    agentReports[key]=report;
+
+    report.on('error',function(event){
+      var detail=event.detail||{};
+      console.error('PBI embed error:',detail);
+      var msg=detail.message||'Unknown error';
+      if(msg.indexOf('401')>=0||msg.indexOf('403')>=0){
+        msg+=' \u2014 Ask your tenant admin to enable "Embed content in apps" in PBI Admin Portal \u2192 Tenant settings \u2192 Developer settings';
+      }
+      fb.style.display='';co.style.display='none';
+      fb.innerHTML='<div class="fallback-icon">'+cfg.icon+'</div><h3>Report Unavailable</h3><p>'+escHtml(msg)+'</p>';
+    });
+
+    report.on('loaded',async function(){
+      var pages=await report.getPages();
+      var cfgNames=cfg.reportPages.map(function(p){return p.toLowerCase();});
+      var matched=pages.filter(function(p){
+        var dn=p.displayName.toLowerCase();
+        return cfgNames.some(function(n){return dn.indexOf(n.substring(0,8))>=0;});
+      });
+      var show=matched.length>0?matched:pages;
+      tabs.innerHTML='';
+      show.forEach(function(page,idx){
+        var btn=document.createElement('button');
+        btn.textContent=page.displayName;
+        btn.setAttribute('data-page',page.name);
+        btn.onclick=function(){
+          report.setPage(page.name);
+          tabs.querySelectorAll('button').forEach(function(b){b.classList.remove('active');});
+          btn.classList.add('active');
+        };
+        if(idx===0)btn.classList.add('active');
+        tabs.appendChild(btn);
+      });
+      if(show.length>0)report.setPage(show[0].name);
+    });
+  }catch(e){
+    console.error('PBI:',e);
+    fb.innerHTML='<div class="fallback-icon">'+cfg.icon+'</div><h3>Report Unavailable</h3><p>'+escHtml(e.message)+'</p>';
+  }
+}
+
+/* ═══════════════ QUERY HISTORY (localStorage) ═══════════════ */
+var HISTORY_KEY='fp-query-history';
+var HISTORY_MAX=200;
+
+function getHistory(){
+  try{return JSON.parse(localStorage.getItem(HISTORY_KEY)||'[]');}catch(e){return [];}
+}
+
+function saveToHistory(agentKey,question,response){
+  try{
+    var hist=getHistory();
+    hist.unshift({
+      id:Date.now(),
+      timestamp:new Date().toISOString(),
+      agent:agentKey,
+      agentName:(agents[agentKey]||{}).name||agentKey,
+      question:question,
+      answer:response.answer||'',
+      steps:response.steps||[],
+      queryTrace:response.queryTrace||[]
+    });
+    if(hist.length>HISTORY_MAX)hist=hist.slice(0,HISTORY_MAX);
+    localStorage.setItem(HISTORY_KEY,JSON.stringify(hist));
+  }catch(e){console.warn('History save failed:',e);}
+}
+
+function openHistory(){
+  var filter=document.getElementById('historyAgentFilter');
+  var opts='<option value="">All Agents</option>';
+  Object.keys(agents).forEach(function(k){
+    opts+='<option value="'+k+'">'+escHtml(agents[k].name)+'</option>';
+  });
+  filter.innerHTML=opts;
+  renderHistory();
+  document.getElementById('historyOverlay').classList.add('open');
+  document.getElementById('historyPanel').classList.add('open');
+}
+
+function closeHistory(){
+  document.getElementById('historyOverlay').classList.remove('open');
+  document.getElementById('historyPanel').classList.remove('open');
+}
+
+function clearHistory(){
+  if(!confirm('Clear all query history?'))return;
+  try{localStorage.removeItem(HISTORY_KEY);}catch(e){}
+  renderHistory();
+}
+
+function renderHistory(){
+  var list=document.getElementById('historyList');
+  var hist=getHistory();
+  var filterVal=document.getElementById('historyAgentFilter').value;
+  if(filterVal)hist=hist.filter(function(h){return h.agent===filterVal;});
+  if(!hist.length){
+    list.innerHTML='<div class="history-empty"><span style="font-size:28px">&#128218;</span><span>No queries yet</span><span style="font-size:11px;color:var(--text-muted)">Chat with an agent to build your history</span></div>';
+    return;
+  }
+  list.innerHTML=hist.map(function(h){
+    var dt=new Date(h.timestamp);
+    var timeStr=dt.toLocaleDateString()+' '+dt.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+    var stepsHtml=h.steps.map(function(s){return '<span class="step-tag">'+escHtml(s)+'</span>';}).join('');
+    var answerPreview=(h.answer||'').replace(/[#*`\n]/g,' ').substring(0,120);
+    return '<div class="history-item" onclick="replayFromHistory(\''+h.agent+'\','+h.id+')">'+
+      '<div class="history-item-header"><span class="history-item-agent">'+escHtml(h.agentName||h.agent)+'</span><span class="history-item-time">'+escHtml(timeStr)+'</span></div>'+
+      '<div class="history-item-question">'+escHtml(h.question)+'</div>'+
+      '<div class="history-item-answer">'+escHtml(answerPreview)+'</div>'+
+      (stepsHtml?'<div class="history-item-steps">'+stepsHtml+'</div>':'')+
+    '</div>';
+  }).join('');
+}
+
+function replayFromHistory(agentKey,entryId){
+  closeHistory();
+  var hist=getHistory();
+  var entry=hist.find(function(h){return h.id===entryId;});
+  if(!entry)return;
+  if(!agents[agentKey])return;
+  enterAgent(agentKey);
+  addMsg(agentKey,'user',entry.question);
+  addMsg(agentKey,'assistant',entry.answer,entry.steps,entry.queryTrace);
+}
+
+/* ═══════════════ MCP CONNECT MODAL ═══════════════ */
+function buildMcpPayload(key){
+  var cfg=agents[key];var m=fabricMeta();
+  var ds=(cfg.datasets&&cfg.datasets[0])||{};
+  var rep=(cfg.reports&&cfg.reports[0])||{};
+  return {
+    name:'fabric-'+key,
+    type:'fabric-data-agent',
+    description:cfg.description,
+    tenantId:m.tenantId,
+    workspaceId:m.workspaceId,
+    agentId:cfg.agentId,
+    semanticModel:{id:ds.id||null,name:ds.name||null,scope:ds.scope||null},
+    report:{id:rep.id||null,name:rep.name||null},
+    endpoint:'https://api.fabric.microsoft.com/v1/workspaces/'+m.workspaceId+
+             '/dataAgents/'+cfg.agentId+'/aiassistant/openai',
+    apiVersion:'2024-02-15-preview',
+    protocol:'openai-assistants-v2',
+    auth:{
+      type:'azure-ad',
+      scope:'https://api.fabric.microsoft.com/.default',
+      credential:'AzureCliCredential | DefaultAzureCredential | ManagedIdentity'
+    }
+  };
+}
+function buildPythonSnippet(p){
+  return '# pip install azure-identity httpx\n'+
+    'from azure.identity import DefaultAzureCredential\n'+
+    'import httpx\n\n'+
+    'cred = DefaultAzureCredential()\n'+
+    'token = cred.get_token("'+p.auth.scope+'").token\n'+
+    'r = httpx.post(\n'+
+    '    "'+p.endpoint+'/assistants",\n'+
+    '    params={"stage":"production","api-version":"'+p.apiVersion+'"},\n'+
+    '    headers={"Authorization": f"Bearer {token}", "Content-Type":"application/json"},\n'+
+    '    json={"model":"'+p.agentId+'","instructions":"You are a Fabric Data Agent."}\n'+
+    ')\nprint(r.json())\n';
+}
+function buildMcpServerConfig(p){
+  return JSON.stringify({
+    mcpServers:{
+      [p.name]:{
+        command:'npx',
+        args:['-y','@modelcontextprotocol/server-fabric-data-agent'],
+        env:{
+          FABRIC_TENANT_ID:p.tenantId,
+          FABRIC_WORKSPACE_ID:p.workspaceId,
+          FABRIC_AGENT_ID:p.agentId,
+          FABRIC_API_VERSION:p.apiVersion
+        }
+      }
+    }
+  },null,2);
+}
+function buildPermissionsBlock(p){
+  return '# Required Microsoft Entra / Fabric permissions\n\n'+
+    '## On the workspace ('+p.workspaceId+')\n'+
+    '- Role: Contributor or higher\n'+
+    '- The identity (user or SPN) must have access to the Fabric workspace\n\n'+
+    '## On the Data Agent ('+p.agentId+')\n'+
+    '- Read access — granted via workspace role\n\n'+
+    '## On the semantic model ('+(p.semanticModel.id||'n/a')+')\n'+
+    '- Build permission (for executeQueries / DAX)\n\n'+
+    '## Fabric tenant settings (admin)\n'+
+    '- "Users can create Fabric items" enabled\n'+
+    '- "Service principals can use Fabric APIs" (if SPN)\n'+
+    '- "Allow service principals to use Power BI APIs" (for embed)\n';
+}
+var _mcpCurrent=null;
+function openMcpModal(key){
+  _mcpCurrent=key;
+  var cfg=agents[key];if(!cfg)return;
+  var p=buildMcpPayload(key);
+  document.getElementById('mcpModalTitle').textContent='MCP Connect — '+cfg.name;
+  document.getElementById('mcpModalSub').textContent='Copy these settings into your MCP server / client';
+  document.getElementById('mcpPaneJson').textContent=JSON.stringify(p,null,2);
+  document.getElementById('mcpPanePython').textContent=buildPythonSnippet(p);
+  document.getElementById('mcpPaneMcp').textContent=buildMcpServerConfig(p);
+  document.getElementById('mcpPanePerms').textContent=buildPermissionsBlock(p);
+  setMcpTab('json');
+  document.getElementById('mcpModal').classList.add('open');
+}
+function closeMcpModal(){document.getElementById('mcpModal').classList.remove('open');_mcpCurrent=null;}
+function setMcpTab(name){
+  ['json','python','mcp','perms'].forEach(function(n){
+    var btn=document.getElementById('mcpTab-'+n);
+    var pane=document.getElementById('mcpPane-'+n);
+    if(btn)btn.classList.toggle('active',n===name);
+    if(pane)pane.classList.toggle('active',n===name);
+  });
+}
+function mcpCopy(){
+  var active=document.querySelector('#mcpModal .modal-pane.active pre');
+  if(!active)return;
+  navigator.clipboard.writeText(active.textContent).then(function(){
+    var t=document.getElementById('copyToast');t.classList.add('show');
+    setTimeout(function(){t.classList.remove('show');},1400);
+  });
+}
+
+init();
+</script>
+</body>
+</html>

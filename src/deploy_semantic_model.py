@@ -426,6 +426,12 @@ def build_model_bim(config, state):
             # still resolves for existing reports without offering a duplicate
             # to Copilot, the Data Agent or report authors. Remove only once no
             # report references it (deploy checks this and will refuse).
+            #
+            # MERGE NOTE (origin/main cbdbb5f): main redefined [Line Revenue] as a
+            # real SUM and did not define [Product Revenue] at all. Taking that
+            # side would delete [Product Revenue] from the live model and break
+            # the very report main owns, which now binds to it. This side keeps
+            # both names resolving, so neither generator's report can break.
             _measure("Line Revenue", "[Product Revenue]",
                      "Deprecated — use [Product Revenue].",
                      fmt="#,0", folder="Commerce", hidden=True),
@@ -521,10 +527,12 @@ def build_model_bim(config, state):
                     "Toujours utiliser les mesures existantes plutot que des agregations manuelles. "
                     "Churn : [Avg Churn Score], [Customers at Risk], [At Risk %], [Revenue at Risk], "
                     "[CLV at Risk], [Avg Recency (days)], [Churned Customers]. "
+                    "Volumetrie : [Total Customers], [Profiled Customers], [Buyers]. "
                     "Engagement : [Avg Engagement Rate], [Unsubscribed Customers]. "
                     "Entonnoir email : [Total Sends], [Sends per Customer], [Open Rate], "
                     "[Click Through Rate], [Bounce Rate], [Unsubscribe Rate], [Unsubscribes]. "
-                    "Commerce : [Revenue], [Total Orders], [Average Order Value], [Units Sold], [Return Rate]. "
+                    "Commerce : [Revenue], [Total Orders], [Average Order Value], [Units Sold], "
+                    "[Product Revenue], [Return Rate]. "
                     "Attribution : [Attributed Orders], [Attributed Revenue], [Attribution Rate], [Campaign ROI]. "
                     "Le score de churn est CALCULE a partir du comportement (recence, chute de frequence, "
                     "engagement, NPS, desabonnement, friction support) et ne s'applique qu'aux clients ayant "

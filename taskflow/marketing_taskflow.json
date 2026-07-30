@@ -1,0 +1,68 @@
+{
+  "name": "Customer 360 - Churn & Campaign Pressure",
+  "description": "Customer 360 on Fabric (CRM + Marketing + Commerce) with a churn signal derived from behaviour, not invented. Storyline: campaign 'Black Friday Blast' over-mails the SEG_HIGH_VALUE segment, triggering an unsubscribe spike, an engagement collapse and lost orders. The semantic model answers the numbers, the graph answers the relationships, and the Data Agent queries both.",
+  "tasks": [
+    {
+      "type": "get data",
+      "id": "c3600000-0000-4000-a000-000000000001",
+      "name": "Ingest CRM / Marketing / Commerce",
+      "description": "Spark notebook landing 15 source CSVs (accounts, customers, segments, campaigns, sends, events, orders, order lines, returns, products, interactions) plus the text corpus (customer notes, email bodies) into Delta, and building the curated views v_churn_cohort (actionable at-risk customers and their drivers) and v_campaign_pressure (sends per customer per campaign - exposes the over-mailing)."
+    },
+    {
+      "type": "store data",
+      "id": "c3600000-0000-4000-a000-000000000002",
+      "name": "Lakehouse - LH_Customer360",
+      "description": "Single Customer 360 store: CRM + Marketing + Commerce as Delta tables, plus the unstructured corpus used for AI transformations and RAG."
+    },
+    {
+      "type": "prepare data",
+      "id": "c3600000-0000-4000-a000-000000000004",
+      "name": "Semantic Model - SM_Marketing_Analytics",
+      "description": "Direct Lake model over the Lakehouse. Owns every NUMBER: revenue, AOV, revenue at risk, churn cohort size, sends per customer, unsubscribes. This is the DAX side of the dual-source Data Agent."
+    },
+    {
+      "type": "analyze and train data",
+      "id": "c3600000-0000-4000-a000-000000000005",
+      "name": "Ontology - ONT_Customer360",
+      "description": "Customer 360 semantic layer: Customer, Account, Segment, Campaign, Send, Event, Order, Product, bound to the Delta tables. Its underlying graph model owns every RELATIONSHIP: multi-hop root-cause from an at-risk customer back to 'Black Friday Blast' and SEG_HIGH_VALUE, and blast-radius traversal."
+    },
+    {
+      "type": "analyze and train data",
+      "id": "c3600000-0000-4000-a000-000000000008",
+      "name": "Data Agent - Marketing_Churn_Agent",
+      "description": "DUAL-SOURCE by design. Routes relationship, root-cause and impact questions to the graph (GQL), and every value question to the semantic model (DAX). The ontology measure path returns empty for numbers - the routing is explicit in aiInstructions."
+    },
+    {
+      "type": "visualize",
+      "id": "c3600000-0000-4000-a000-000000000007",
+      "name": "Report - RPT_Marketing_Churn",
+      "description": "Demo arc in four moves: detect (who is at risk) -> diagnose (which campaign) -> quantify (revenue at risk, which VIPs) -> act (suppress, throttle, win back)."
+    }
+  ],
+  "edges": [
+    {
+      "source": "c3600000-0000-4000-a000-000000000001",
+      "target": "c3600000-0000-4000-a000-000000000002"
+    },
+    {
+      "source": "c3600000-0000-4000-a000-000000000002",
+      "target": "c3600000-0000-4000-a000-000000000005"
+    },
+    {
+      "source": "c3600000-0000-4000-a000-000000000002",
+      "target": "c3600000-0000-4000-a000-000000000004"
+    },
+    {
+      "source": "c3600000-0000-4000-a000-000000000004",
+      "target": "c3600000-0000-4000-a000-000000000007"
+    },
+    {
+      "source": "c3600000-0000-4000-a000-000000000004",
+      "target": "c3600000-0000-4000-a000-000000000008"
+    },
+    {
+      "source": "c3600000-0000-4000-a000-000000000005",
+      "target": "c3600000-0000-4000-a000-000000000008"
+    }
+  ]
+}
