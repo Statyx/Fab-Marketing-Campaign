@@ -300,7 +300,7 @@ The height model has **two terms, and conflating them is what makes estimates wr
 - **line height is proportional** to the font — 1pt = 4/3 px at 96 DPI, line box ≈1.35 × em,
   so **1.8 px per pt**;
 - **padding / chrome is constant** and depends on the control, not the font — ≈8px for a
-  textbox, ≈24px for a card.
+  textbox, ≈32px for a card.
 
 A single "px per pt" multiplier cannot express a constant term: it under-sizes small text and
 over-sizes large text. A first attempt used `height >= pt * 2.2`, which passed a 10pt subtitle in
@@ -309,21 +309,27 @@ a 22px box that actually needs 26px. Keep the terms separate:
 ```python
 line_px(pt)        = pt * 1.8
 text_height(pt)    = ceil(line_px(pt) + 8)          # textbox
-card_height(*pts)  = ceil(sum(line_px(p)) + 24)     # cardVisual stacks 3 texts
+card_height(*pts)  = ceil(sum(line_px(p)) + 32)     # cardVisual stacks 3 texts
 ```
+
+> **These three constants are derived, not measured.** Nothing has ever been compared against the
+> Power BI renderer; the only evidence is that a header and a card sized this way were inspected
+> visually and looked right. The two generators independently derived **24** and **32** for the card
+> chrome — an 8px disagreement neither could settle. This project takes the larger one, because
+> over-reserving costs nothing here while under-reserving is precisely the defect that shipped.
+> Do not restate them as verified.
 
 | Element | Font(s) | Needs | Box |
 |---|---|---|---|
 | Page title | 17pt | 39px | 42 |
 | Page subtitle | 10pt | 26px | 26 |
 | Header band | — | 74px | 80 |
-| KPI card | 11 + **24** + 9pt | 104px | 112 |
+| KPI card | 11 + **24** + 9pt | 112px | 112 |
 
 **A card is not one line.** It stacks `vcObjects.title` (11pt), `calloutValue` and
-`categoryLabel` (9pt). With a 30pt callout the stack needs 114px in a 112px box, so the category
+`categoryLabel` (9pt). With a 30pt callout the stack needs 122px in a 112px box, so the category
 label was clipped on **all 20 cards**. The vertical grid has no 10px to give, so the fix is the
-font — callout 30pt → 24pt (104px, 8px of margin) — not the box. Shrinking the box instead makes
-it worse.
+font — callout 30pt → 24pt — not the box. Shrinking the box instead makes it worse.
 
 `validate_layout(report)` **blocks the deploy** on four defect classes: out-of-page bounds, text
 too large for its box, **card stacks too tall for their card**, and overlapping visuals.
@@ -423,7 +429,7 @@ by name, and only creates when neither exists. Re-running resumes; it never dupl
 | `COUNTROWS(FILTER(...))` → BLANK | KPI cards show blank instead of 0 |
 | **Renaming a measure is a breaking change** | live reports fail at render, no warning; keep a hidden alias |
 | **Validate columns, not just measures** | `ROW("v",[M])` misses broken column refs entirely |
-| **Power BI clips text, never shrinks it** | `line_px = pt * 1.8` **plus** a constant pad (8px textbox, 24px card); a single multiplier is wrong |
+| **Power BI clips text, never shrinks it** | `line_px = pt * 1.8` **plus** a constant pad (8px textbox, 32px card), both derived not measured; a single multiplier is wrong |
 | **A card stacks 3 texts** (title + callout + label) | sizing on the callout alone clips the label; fix the font, not the box |
 | **`updateDefinition` can return Succeeded and apply nothing** | always read the definition back |
 | Capacity pauses when idle | resume before deploy or demo |
@@ -450,6 +456,8 @@ before **any** deploy script.
 | **Report definition** | pages non-empty, every data visual has a `prototypeQuery`, every referenced table/column/measure exists in the model, projections match the query, groupings respect filter direction, theme name consistent, storyline named on the page |
 | **Layout** | no clipped text, no overlapping visuals, nothing off-page, header band tall enough for its own text, cards clear of the header — plus a test that the rule *rejects* the geometry that originally shipped |
 | **Model contract** | deprecated measure aliases still present and hidden, no duplicate measure names |
+| **Breaking-change guard** | `check_breaking_removals()` raises on a removal a report still uses and names the consumer, allows removing an unused measure, treats a rename-with-alias as *not* a removal, and never fails the deploy on an API outage — mutation-tested (neutralising the guard turns the first red) |
+| **Item ownership** | this generator refuses to publish to a report item reserved for another generator, and renames so the next run cannot find it back by name |
 
 The report tests build the report and the model **in memory** and cross-check them against each
 other. A visual referencing a measure that no longer exists, or grouping across a relationship
@@ -458,4 +466,4 @@ that cannot carry the filter, fails the build — before anything reaches Fabric
 Two further checks run **against the live tenant** at deploy time, because they cannot be done
 offline: `validate_fields()` executes every measure *and column* reference through
 `executeQueries`, and `check_breaking_removals()` refuses to publish a model that would break a
-deployed report.
+deployed report. The latter's *logic* is covered offline with stubs; only its API calls are not.

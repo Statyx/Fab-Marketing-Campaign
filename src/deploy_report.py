@@ -87,9 +87,21 @@ FORK_SUFFIX = "_wt"
 #   * padding / chrome is CONSTANT and depends on the control, not the font.
 # A single "px per pt" multiplier cannot express a constant term: it under-sizes
 # small text and over-sizes large text. Keep the two terms separate.
+#
+# UNVERIFIED: these three constants are DERIVED, never measured against the
+# Power BI renderer. The only evidence they are safe is that a header and a card
+# sized with them were inspected visually and looked right. Do not restate them
+# as verified. If a control ever clips despite passing validate_layout(), these
+# are the first suspects.
+#
+# CARD_CHROME was 24. The main-checkout generator independently derived 32 for
+# the same control (it keeps one textbox pad inside the card on top of the card
+# chrome). Neither number is measured, so this converges on the larger one:
+# being wrong by +8px costs nothing here (a 44pt stack needs 112 in a 112 box),
+# while being wrong by -8px is exactly the defect that shipped.
 LINE_PX_PER_PT = 1.8      # 96/72 DPI * 1.35 line-height
 TEXTBOX_PAD = 8           # textbox inner padding, top + bottom
-CARD_CHROME = 24          # card border, inner margins and the gaps between rows
+CARD_CHROME = 32          # card border + inner margins + one container pad
 
 
 def line_px(font_pt):
@@ -118,7 +130,7 @@ HEADER_TITLE_H = 42                                    # >= text_height(17) = 39
 HEADER_SUB_H = 26                                      # == text_height(10)
 HEADER_H = 80                                          # 6 + 42 + 26 + 4 + slack
 
-# Card fonts. The callout was 30pt: 11+30+9 needs 114px in a 112px box, so the
+# Card fonts. The callout was 30pt: 11+30+9 needs 122px in a 112px box, so the
 # category label was clipped on all 20 cards. The grid has no 10px to spare
 # vertically, so the fix is the font, not the box.
 CARD_TITLE_PT, CARD_VALUE_PT, CARD_LABEL_PT = 11, 24, 9

@@ -71,11 +71,13 @@ One command: `python deploy_all.py` (idempotent, tenant-guarded).
 - **Validate columns, not just measures.** `EVALUATE ROW("v",[M])` tests measures;
   `EVALUATE TOPN(1, VALUES('t'[c]))` tests columns. A broken column kills a visual just as hard.
 - **Power BI clips text — it never shrinks the font and never warns.** Two terms, kept separate:
-  line height is proportional (`pt * 1.8`), padding/chrome is **constant** (~8px textbox, ~24px
+  line height is proportional (`pt * 1.8`), padding/chrome is **constant** (~8px textbox, ~32px
   card). A single "px per pt" multiplier cannot express a constant and under-sizes small text.
-  A **card stacks three texts** (title + calloutValue + categoryLabel) — sizing it against the
-  callout alone clips the label. `validate_layout()` blocks the deploy on clipping, card stacks,
-  overlap (only at `z >= 1`; the header band is a deliberate `z = 0` background) and out-of-page.
+  These constants are **derived, never measured** against the renderer — do not restate them as
+  verified. A **card stacks three texts** (title + calloutValue + categoryLabel) — sizing it
+  against the callout alone clips the label. `validate_layout()` blocks the deploy on clipping,
+  card stacks, overlap (only at `z >= 1`; the header band is a deliberate `z = 0` background)
+  and out-of-page.
 - **`updateDefinition` can return 202/Succeeded while applying nothing** → always read the
   definition back and compare before declaring success.
 - Capacity pauses when idle → resume before deploy/demo.

@@ -619,3 +619,70 @@ def test_own_item_is_reused_not_duplicated(dr, reserved):
         lambda n: {"RPT_Marketing_Churn": reserved,
                    "RPT_Marketing_Churn" + dr.FORK_SUFFIX: "0000-fork"}.get(n)) == (
             "0000-fork", "RPT_Marketing_Churn" + dr.FORK_SUFFIX)
+
+
+# -- Breaking-change guard ---------------------------------------------------
+
+@pytest.fixture(scope="module")
+def dsm():
+    import deploy_semantic_model
+    return deploy_semantic_model
+
+
+def _bim(*names):
+    return {"model": {"tables": [{"name": "t",
+                                  "measures": [{"name": n} for n in names]}]}}
+
+
+def _stub(dsm, monkeypatch, live, used):
+    monkeypatch.setattr(dsm, "deployed_measure_names",
+                        lambda *a, **k: {("t", n) for n in live})
+    monkeypatch.setattr(dsm, "measures_used_by_reports", lambda *a, **k: used)
+
+
+def test_guard_refuses_to_delete_a_measure_a_report_uses(dsm, monkeypatch):
+    """The averted incident, replayed at the gate.
+
+    The main-checkout model still defined [Line Revenue] and did not know about
+    [Product Revenue]. Deploying it would have dropped a measure the live report
+    binds to; Fabric would have returned 200 and the report would have rendered
+    "Something's wrong with one or more fields" at the demo. Nothing was
+    actually deleted -- it was caught by hand. This makes the catch mechanical.
+    """
+    _stub(dsm, monkeypatch,
+          live={"Product Revenue", "Line Revenue"},
+          used={"Product Revenue": {"RPT_Marketing_Churn"}})
+    with pytest.raises(RuntimeError) as err:
+        dsm.check_breaking_removals("tok", "ws", "sm", _bim("Line Revenue"))
+    assert "Product Revenue" in str(err.value)
+    assert "RPT_Marketing_Churn" in str(err.value), "the error must name the consumer to fix"
+
+
+def test_guard_allows_dropping_a_measure_nobody_uses(dsm, monkeypatch):
+    """A guard that blocks every removal gets switched off. It must only block real breakage."""
+    _stub(dsm, monkeypatch, live={"Product Revenue", "Scratch"},
+          used={"Product Revenue": {"RPT_Marketing_Churn"}})
+    dsm.check_breaking_removals("tok", "ws", "sm", _bim("Product Revenue"))
+
+
+def test_renaming_with_a_hidden_alias_is_not_a_removal(dsm, monkeypatch):
+    """Why [Line Revenue] survives: keeping the old name as an alias empties `removed`.
+
+    This is the remediation the guard exists to make possible -- rename freely,
+    provided the old name stays as a hidden alias until consumers migrate.
+    """
+    called = []
+    _stub(dsm, monkeypatch, live={"Product Revenue", "Line Revenue"}, used={})
+    monkeypatch.setattr(dsm, "measures_used_by_reports",
+                        lambda *a, **k: called.append(1) or {})
+    dsm.check_breaking_removals("tok", "ws", "sm",
+                                _bim("Product Revenue", "Line Revenue"))
+    assert not called, "nothing was removed, so the guard must not scan every report"
+
+
+def test_guard_does_not_block_the_deploy_when_the_api_is_unavailable(dsm, monkeypatch):
+    """A guard that fails the deploy on an unrelated API hiccup is a guard people delete."""
+    def boom(*a, **k):
+        raise RuntimeError("503 Service Unavailable")
+    monkeypatch.setattr(dsm, "deployed_measure_names", boom)
+    dsm.check_breaking_removals("tok", "ws", "sm", _bim("Product Revenue"))
