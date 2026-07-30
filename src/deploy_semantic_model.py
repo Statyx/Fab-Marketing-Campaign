@@ -147,6 +147,14 @@ def build_model_bim(config, state):
             _col("last_order_at", "dateTime", "Last order", summarize_none=True),
         ],
         "measures": [
+            _measure("Profiled Customers", "COUNTROWS(crm_customer_profile)",
+                     "Contacts with a behavioural profile — sliceable by risk_band",
+                     fmt="#,0", folder="Counts"),
+            _measure("Buyers",
+                     "COALESCE(CALCULATE(COUNTROWS(crm_customer_profile), "
+                     "crm_customer_profile[is_customer] = TRUE()), 0)",
+                     "Contacts with at least one order (churn only applies to them)",
+                     fmt="#,0", folder="Counts"),
             _measure("Avg Churn Score",
                      "CALCULATE(AVERAGE(crm_customer_profile[churn_risk_score]), "
                      "crm_customer_profile[is_customer] = TRUE())",
@@ -395,6 +403,9 @@ def build_model_bim(config, state):
         "measures": [
             _measure("Units Sold", "SUM(order_lines[quantity])", "Units sold",
                      fmt="#,0", folder="Commerce"),
+            _measure("Line Revenue", "SUM(order_lines[line_total_eur])",
+                     "Revenue at line level — sliceable by product category",
+                     fmt="#,0", folder="Commerce"),
             _measure("Lines per Order", "DIVIDE(COUNTROWS(order_lines), [Total Orders])",
                      "Average lines per order", fmt="#,0.00", folder="Commerce"),
         ],
@@ -487,10 +498,12 @@ def build_model_bim(config, state):
                     "Toujours utiliser les mesures existantes plutot que des agregations manuelles. "
                     "Churn : [Avg Churn Score], [Customers at Risk], [At Risk %], [Revenue at Risk], "
                     "[CLV at Risk], [Avg Recency (days)], [Churned Customers]. "
+                    "Volumetrie : [Total Customers], [Profiled Customers], [Buyers]. "
                     "Engagement : [Avg Engagement Rate], [Unsubscribed Customers]. "
                     "Entonnoir email : [Total Sends], [Sends per Customer], [Open Rate], "
                     "[Click Through Rate], [Bounce Rate], [Unsubscribe Rate], [Unsubscribes]. "
-                    "Commerce : [Revenue], [Total Orders], [Average Order Value], [Units Sold], [Return Rate]. "
+                    "Commerce : [Revenue], [Total Orders], [Average Order Value], [Units Sold], "
+                    "[Line Revenue], [Return Rate]. "
                     "Attribution : [Attributed Orders], [Attributed Revenue], [Attribution Rate], [Campaign ROI]. "
                     "Le score de churn est CALCULE a partir du comportement (recence, chute de frequence, "
                     "engagement, NPS, desabonnement, friction support) et ne s'applique qu'aux clients ayant "

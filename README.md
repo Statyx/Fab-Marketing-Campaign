@@ -112,6 +112,9 @@ python -m pytest tests\ -v --tb=short
 python src\deploy_all.py
 #   or a subset:  python src\deploy_all.py workspace lakehouse
 #   or resume:    python src\deploy_all.py --from semantic_model
+
+# 5. Run the portal (embedded report pages + Data Agent chat)
+.\portal\start.ps1                              # http://localhost:8000
 ```
 
 The generator prints a storyline check so a run proves the signal exists:
@@ -133,11 +136,79 @@ Storyline check
 src/config.yaml          — workspace, storyline, churn weights, volumes (single source of truth)
 src/generate_data.py     — behaviour simulation + derived churn
 src/helpers.py           — Fabric API auth, async polling, config/state
+src/deploy_report.py     — Power BI report, 4 persona pages (legacy PBIX format)
+src/validate_report.py   — replays every visual's prototypeQuery in DAX (proves none render blank)
+src/build_taskflow.py    — generates the workspace task flow JSON from config.yaml
 src/state.json           — deployment IDs (idempotent, gitignored)
-tests/test_smoke.py      — offline gate, 34 tests
+portal/                  — FastAPI portal: 4 personas, embedded report pages + Data Agent chat
+tests/test_smoke.py      — offline gate: data signal, report ↔ model, portal ↔ report contracts
+tests/test_taskflow.py   — task flow gate (schema, DAG, config sync, dual-source)
+taskflow/                — workspace task flow + import instructions
 theme/                   — accessible Fluent-2 Power BI theme (WCAG / colour-blind checked)
-docs/ARCHITECTURE.md     — full design
 ```
+
+---
+
+## The portal
+
+A FastAPI app that puts one **persona** in front of each report page: the page is embedded on
+the right, a chat with the Data Agent on the left, both sharing the same accent colour.
+
+```powershell
+az login                  # the backend uses AzureCliCredential — no service principal
+.\portal\start.ps1        # http://localhost:8000
+```
+
+`start.ps1` refuses to launch if `src/state.json` has no `workspace_id` / `report_id` /
+`data_agent_id`, so a missing deploy surfaces as an error instead of an empty embed panel.
+
+| Persona | Page | Question it answers |
+|---|---|---|
+| 🎯 Direction | Direction | how much value is exposed |
+| 🛟 Retention | Retention | who is leaving, and which customers to call |
+| 📣 Marketing | Marketing | which campaign caused it |
+| 🛒 Commerce | Commerce | what it costs in revenue |
+
+Everything is config-driven: personas live in the `AGENTS` dict in `portal/backend/main.py`,
+the frontend discovers them from `/api/agents`, and all IDs are read from `src/state.json` —
+there is not a single hardcoded GUID. Adding a persona is one dict entry.
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/health` | liveness + token expiry — hit this first on a 502 |
+| `GET /api/agents` | persona registry + tenant/workspace context |
+| `POST /api/agents/{key}/chat` | question → Data Agent, returns answer, tool trace, follow-ups |
+| `GET /api/embed-token` | report embed URL + user token (user-owns-data) |
+| `POST /api/admin/refresh-tokens` | force a token refresh without restarting |
+
+
+---
+
+## Workspace task flow
+
+The workspace canvas that turns a flat item list into the story:
+
+```
+Ingest ──► Lakehouse ─┬─► Ontology (+ graph) ─┐
+(notebook)            │                       ├─► Data Agent
+                      └─► Semantic Model ─────┘
+                              │
+                              └──────────────────► Report
+```
+
+Both the semantic model **and** the ontology's graph feed the Data Agent — the dual-source rule
+made visible on the canvas. The graph gets no task of its own (it is underlying to the ontology),
+and the CSV→Delta notebook sits on the ingest task rather than duplicating it.
+
+Fabric has **no public REST API for task flows**, so this is a generated JSON you import once:
+
+```powershell
+python src\build_taskflow.py     # -> taskflow\marketing_taskflow.json
+```
+
+Then workspace → task flow details pane → **Import and export task flow** → *Import*, and
+replay the item assignments (the file cannot carry them). Full steps and the item→task table:
+[`taskflow/README.md`](taskflow/README.md).
 
 ---
 
@@ -145,19 +216,26 @@ docs/ARCHITECTURE.md     — full design
 
 | Layer | State |
 |---|---|
-| Config-driven generator with real churn | ✅ validated (39 tests) |
-| Test gate | ✅ 39 passing |
+| Config-driven generator with real churn | ✅ validated |
+| Test gate | ✅ 72 passing |
 | Workspace + Lakehouse (15 CSV + 420 text files) | ✅ deployed |
 | Delta tables + curated churn views | ✅ deployed (Spark notebook) |
-| Semantic model (Direct Lake, 12 tables / 45 measures) | ✅ deployed, 7/7 DAX checks |
-| Ontology + Graph (Customer 360) | ⏳ next |
-| Dual-source Data Agent | ⏳ planned |
-| Power BI report | ⏳ planned |
-| Portal | ⏳ planned |
+| Semantic model (Direct Lake, 12 tables / 48 measures) | ✅ deployed |
+| Workspace task flow (6 tasks, generated + gated) | ✅ imported |
+| Ontology + Graph (Customer 360) | ✅ deployed |
+| Dual-source Data Agent | ✅ deployed |
+| Power BI report (4 pages / 46 visuals) | ✅ deployed, 35/35 visual queries return data |
+| Portal (4 personas, embed + chat) | ✅ running, chat verified end-to-end |
 
-Validated on the deployed model: 12 000 customers · 36 508 orders · 4.96 M€ revenue · AOV 135.83 € ·
-981 customers at risk (9.6 %) · 285 k€ revenue at risk · all five risk bands populated ·
-lifecycle coherent (at_risk 71.7 > churned 64.6 > active 26.4, prospects unscored).
+Measured on the **deployed** model (`validate_report.py` + live Data Agent calls):
+12 000 customers · 37 466 orders · 5.08 M€ revenue · AOV 135.68 € · 825 customers at risk (8 %) ·
+154 866 € CLV at risk · NPS 7.98 · `Black Friday Blast` at **3.90 sends per customer vs 1.00**
+for the 19 other campaigns, 247 unsubscribes — the culprit is visible without being told.
+
+> ⚠️ The local `data/raw` CSVs are a **different draw** than what is in the Lakehouse
+> (981 at risk / 4.96 M€ locally). Re-running `generate_data.py` + the setup notebook will
+> move the report and the agent onto the local figures. Regenerate both together, never one alone.
+
 
 ### Curated views (created by the setup notebook)
 

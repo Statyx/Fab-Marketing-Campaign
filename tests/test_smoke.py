@@ -72,6 +72,209 @@ def test_state_example_is_valid_json():
     json.loads((SRC / "state.example.json").read_text(encoding="utf-8"))
 
 
+# ── Report <-> semantic model contract ──────────────────────────
+# Every visual in the report references (table, column|measure) pairs by name.
+# A typo or a measure living on another table renders a BLANK visual in Fabric with
+# no error at deploy time — so the contract is checked statically here instead.
+_STUB_STATE = {"workspace_id": "stub", "semantic_model_id": "stub",
+               "lakehouse_sql_endpoint": "stub.datawarehouse.fabric.microsoft.com"}
+
+
+@pytest.fixture(scope="module")
+def model_inventory(cfg):
+    import deploy_semantic_model as dsm
+    bim = dsm.build_model_bim(cfg, dict(_STUB_STATE))
+    columns, measures = set(), set()
+    for t in bim["model"]["tables"]:
+        for c in t.get("columns", []):
+            columns.add((t["name"], c["name"]))
+        for m in t.get("measures", []):
+            measures.add((t["name"], m["name"]))
+    return columns, measures
+
+
+@pytest.fixture(scope="module")
+def report_refs(cfg):
+    """[(page, visual, kind, table, property), ...] pulled from every prototypeQuery."""
+    import deploy_report as dr
+    report, _, _, _ = dr.build_report(dict(_STUB_STATE), cfg)
+    refs = []
+    for section in report["sections"]:
+        for vc in section["visualContainers"]:
+            sv = json.loads(vc["config"])["singleVisual"]
+            proto = sv.get("prototypeQuery")
+            if not proto:
+                continue
+            entity_of = {f["Name"]: f["Entity"] for f in proto["From"]}
+            for sel in proto["Select"]:
+                kind = "Column" if "Column" in sel else "Measure"
+                node = sel[kind]
+                alias = node["Expression"]["SourceRef"]["Source"]
+                refs.append((section["name"], sv.get("visualType"), kind,
+                             entity_of[alias], node["Property"]))
+    return refs
+
+
+def test_report_references_exist_in_the_model(report_refs, model_inventory):
+    columns, measures = model_inventory
+    missing = [r for r in report_refs
+               if (r[3], r[4]) not in (columns if r[2] == "Column" else measures)]
+    assert not missing, "report references absent from the semantic model: " + str(missing)
+
+
+def test_report_visuals_all_have_a_prototype_query(cfg):
+    import deploy_report as dr
+    report, _, _, _ = dr.build_report(dict(_STUB_STATE), cfg)
+    dataless = {"textbox", "basicShape"}
+    for section in report["sections"]:
+        for vc in section["visualContainers"]:
+            sv = json.loads(vc["config"])["singleVisual"]
+            if sv["visualType"] in dataless:
+                continue
+            assert sv.get("prototypeQuery"), \
+                f"{section['name']}/{sv['visualType']} has no prototypeQuery -> renders blank"
+
+
+def test_report_visuals_stay_inside_the_canvas(cfg):
+    import deploy_report as dr
+    report, _, _, _ = dr.build_report(dict(_STUB_STATE), cfg)
+    for section in report["sections"]:
+        for vc in section["visualContainers"]:
+            assert vc["x"] >= 0 and vc["y"] >= 0
+            assert vc["x"] + vc["width"] <= section["width"], f"{section['name']}: visual overflows width"
+            assert vc["y"] + vc["height"] <= section["height"], f"{section['name']}: visual overflows height"
+
+
+def test_report_is_legacy_pbix_not_pbir(cfg):
+    """PBIR renders blank in Fabric — the report must stay legacy (sections/visualContainers)."""
+    import deploy_report as dr
+    report, pbir, theme, theme_name = dr.build_report(dict(_STUB_STATE), cfg)
+    assert "sections" in report and report["sections"]
+    assert all("visualContainers" in s for s in report["sections"])
+    assert pbir["datasetReference"]["byConnection"]["connectionString"]
+    assert theme["name"] == theme_name
+
+
+def test_report_pages_match_config_names(cfg):
+    import deploy_report as dr
+    report, _, _, _ = dr.build_report(dict(_STUB_STATE), cfg)
+    names = [s["name"] for s in report["sections"]]
+    assert names == ["Direction", "Retention", "Marketing", "Commerce"]
+
+
+# ── Portal <-> report / backend contract ────────────────────────
+# The portal is a copy of a sister project's portal, so these tests exist to prove the
+# event-specific parts (Eventhouse floor plan, KQL dashboard embed) were fully removed
+# and that every persona still points at a page that actually exists.
+PORTAL = ROOT / "portal"
+
+
+def _portal_agents():
+    """AGENTS registry read statically from portal/backend/main.py.
+
+    Parsed with ast rather than imported: importing would pull in fastapi and
+    azure-identity, which the test environment has no reason to install.
+    """
+    tree = ast.parse((PORTAL / "backend" / "main.py").read_text(encoding="utf-8"))
+    node = next(n for n in tree.body
+                if isinstance(n, (ast.Assign, ast.AnnAssign))
+                and "AGENTS" in ast.dump(n.targets[0] if isinstance(n, ast.Assign) else n.target))
+    out = {}
+    for k, v in zip(node.value.keys, node.value.values):
+        fields = {}
+        for fk, fv in zip(v.keys, v.values):
+            try:
+                fields[fk.value] = ast.literal_eval(fv)
+            except ValueError:
+                # A list holding an f-string (the culprit-campaign suggestion) is not a
+                # literal as a whole — keep the elements so counts stay meaningful.
+                fields[fk.value] = [_lit_or_dynamic(e) for e in fv.elts] \
+                    if isinstance(fv, ast.List) else "<dynamic>"
+        out[k.value] = fields
+    return out
+
+
+def _lit_or_dynamic(node):
+    try:
+        return ast.literal_eval(node)
+    except ValueError:
+        return "<dynamic>"
+
+
+def _portal_routes():
+    """Route paths declared by @app.<method>("...") decorators in main.py."""
+    tree = ast.parse((PORTAL / "backend" / "main.py").read_text(encoding="utf-8"))
+    paths = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.AsyncFunctionDef):
+            for dec in node.decorator_list:
+                if isinstance(dec, ast.Call) and dec.args and isinstance(dec.args[0], ast.Constant):
+                    paths.add(dec.args[0].value)
+    return paths
+
+
+def test_portal_personas_map_onto_real_report_pages(cfg):
+    import deploy_report as dr
+    report, _, _, _ = dr.build_report(dict(_STUB_STATE), cfg)
+    pages = {s["displayName"] for s in report["sections"]}
+    for key, a in _portal_agents().items():
+        assert a["reportPages"], f"persona '{key}' has no reportPages"
+        for p in a["reportPages"]:
+            assert p in pages, f"persona '{key}' points at page '{p}' which the report does not have"
+
+
+def test_portal_personas_are_complete():
+    for key, a in _portal_agents().items():
+        for field in ("name", "description", "icon", "accent", "welcome"):
+            assert a.get(field), f"persona '{key}' is missing '{field}'"
+        assert a["accent"].startswith("#") and len(a["accent"]) == 7, f"persona '{key}': bad accent"
+        assert len(a["suggestions"]) >= 3, f"persona '{key}' needs at least 3 suggestions"
+
+
+def test_portal_frontend_calls_only_existing_endpoints():
+    """Every /api/... literal in the UI must resolve to a route the backend declares."""
+    import re
+    html = (PORTAL / "static" / "index.html").read_text(encoding="utf-8")
+    routes = _portal_routes()
+    for literal in sorted(set(re.findall(r"""['"](/api/[^'"]*)""", html))):
+        assert any(r == literal or r.startswith(literal) for r in routes), \
+            f"frontend calls '{literal}' but no backend route matches"
+
+
+def test_portal_has_no_leftover_eventhouse_code():
+    """The floor-plan heat map and KQL dashboard embed belong to the sister project."""
+    html = (PORTAL / "static" / "index.html").read_text(encoding="utf-8")
+    py = (PORTAL / "backend" / "main.py").read_text(encoding="utf-8")
+    for token in ("floorplan", "floorPlan", "ZONE_LAYOUT", "FABRIC_EMBED",
+                  "kusto", "Eventhouse", "clusterUri", "dashboardId"):
+        assert token not in html, f"index.html still references '{token}'"
+        assert token not in py, f"main.py still references '{token}'"
+
+
+def test_portal_frontend_has_no_broken_concatenation():
+    """A string chain left open by a missing ';' swallows the next statement.
+
+    `ctx.innerHTML = '<div>...' +` followed by `parent.appendChild(ctx)` concatenates
+    the *return value* of appendChild into the markup, so the page renders a literal
+    "[object HTMLDivElement]". Caught in the browser, never by a syntax check —
+    it is valid JavaScript.
+    """
+    lines = (PORTAL / "static" / "index.html").read_text(encoding="utf-8").splitlines()
+    for i, line in enumerate(lines):
+        if not line.rstrip().endswith("+"):
+            continue
+        j = i + 1
+        while j < len(lines) and not lines[j].strip():
+            j += 1
+        if j >= len(lines):
+            continue
+        nxt = lines[j]
+        assert ".appendChild(" not in nxt and ".innerHTML=" not in nxt, (
+            f"index.html line {i + 1} ends with '+' and line {j + 1} is a statement "
+            f"({nxt.strip()[:60]}...) — missing ';' swallows it into the string"
+        )
+
+
 # ── Generated data ──────────────────────────────────────────────
 def _needs_data():
     return not (RAW / "crm" / "crm_customer_profile.csv").exists()
