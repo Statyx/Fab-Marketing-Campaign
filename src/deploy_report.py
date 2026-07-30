@@ -67,31 +67,58 @@ from helpers import (load_config, load_state, save_state, get_fabric_token, fabr
 PAGE_W, PAGE_H = 1280, 720
 
 # ── Text metrics ────────────────────────────────────────────────────────────
-# A Power BI textbox clips its content when the box is shorter than the line box
-# (glyph em + leading + the control's own padding). It does not shrink the font
-# and it does not warn — the text is simply cut off, top and bottom.
-# 1pt = 4/3 px at 96 DPI; line-height ~1.35; padding ~8px. The factor below folds
-# those together with a small safety margin.
-# This existed because the header hard-coded h=30 for a 17pt title (needs 38) and
-# h=20 for a 10pt subtitle (needs 22), and the two boxes overlapped by 2px.
-# Heights are derived from the font size now — never hard-code them again.
-TEXT_H_PER_PT = 2.2
+# A Power BI control clips its content when the box is shorter than the text it
+# stacks. It does not shrink the font and it does not warn — the text is simply
+# cut off. Two separate defects came from hard-coding box heights: a 17pt title
+# in a 30px box, and a card stacking 11+30+9pt into 112px.
+#
+# The model has two parts, and conflating them is what makes estimates wrong:
+#   * line height is PROPORTIONAL to the font — 1pt = 4/3 px at 96 DPI, and the
+#     line box is ~1.35x the em.  -> 4/3 * 1.35 = 1.8 px per pt
+#   * padding / chrome is CONSTANT and depends on the control, not the font.
+# A single "px per pt" multiplier cannot express a constant term: it under-sizes
+# small text and over-sizes large text. Keep the two terms separate.
+LINE_PX_PER_PT = 1.8      # 96/72 DPI * 1.35 line-height
+TEXTBOX_PAD = 8           # textbox inner padding, top + bottom
+CARD_CHROME = 24          # card border, inner margins and the gaps between rows
+
+
+def line_px(font_pt):
+    """Height of one rendered line of `font_pt` text, excluding container padding."""
+    return font_pt * LINE_PX_PER_PT
 
 
 def text_height(font_pt):
     """Minimum textbox height that renders `font_pt` without clipping."""
-    return int(math.ceil(font_pt * TEXT_H_PER_PT))
+    return int(math.ceil(line_px(font_pt) + TEXTBOX_PAD))
+
+
+def card_height(*font_pts):
+    """Minimum cardVisual height for the stack of texts it renders.
+
+    A card is not one line: it stacks its vcObjects.title, its calloutValue and
+    its categoryLabel. Sizing it against the callout alone clips the label at
+    the bottom — which is exactly what shipped.
+    """
+    return int(math.ceil(sum(line_px(p) for p in font_pts) + CARD_CHROME))
 
 
 HEADER_TITLE_PT, HEADER_SUB_PT = 17, 10
-HEADER_PAD_TOP, HEADER_PAD_BOTTOM = 10, 6
-HEADER_TITLE_H = text_height(HEADER_TITLE_PT)          # 38
-HEADER_SUB_H = text_height(HEADER_SUB_PT)              # 22
-HEADER_H = HEADER_PAD_TOP + HEADER_TITLE_H + HEADER_SUB_H + HEADER_PAD_BOTTOM   # 76
+HEADER_PAD_TOP, HEADER_PAD_BOTTOM = 6, 4
+HEADER_TITLE_H = 42                                    # >= text_height(17) = 39
+HEADER_SUB_H = 26                                      # == text_height(10)
+HEADER_H = 80                                          # 6 + 42 + 26 + 4 + slack
+
+# Card fonts. The callout was 30pt: 11+30+9 needs 114px in a 112px box, so the
+# category label was clipped on all 20 cards. The grid has no 10px to spare
+# vertically, so the fix is the font, not the box.
+CARD_TITLE_PT, CARD_VALUE_PT, CARD_LABEL_PT = 11, 24, 9
 
 MARGIN = 28
-CARD_Y = HEADER_H + 10                                 # 86
-CARD_H = 104                                           # cards still end at y=190
+CARD_Y = HEADER_H + 8                                  # 88
+CARD_H = 112                                           # needs card_height(11,24,9) = 104
+ROW1_Y, ROW1_H = 208, 242                              # bottom stays at 450
+ROW2_Y, ROW2_H = 462, 246
 
 # Accessible palette — mirrors theme/Accessible_Fluent2_Theme.json.
 C_BLUE, C_RED, C_GOLD, C_TEAL = "#00008F", "#863C41", "#896610", "#027180"
@@ -165,13 +192,13 @@ def _card(name, x, y, w, h, table, measure, accent, title, z=1):
         "drillFilterOtherVisuals": True,
         "objects": {
             "outline": [{"properties": {"show": _lit("false")}}],
-            "calloutValue": [{"properties": {"fontSize": _lit("30D"), "bold": _lit("true"),
+            "calloutValue": [{"properties": {"fontSize": _lit(f"{CARD_VALUE_PT}D"), "bold": _lit("true"),
                                              "color": _solid(accent)}}],
-            "categoryLabel": [{"properties": {"show": _lit("true"), "fontSize": _lit("9D"),
+            "categoryLabel": [{"properties": {"show": _lit("true"), "fontSize": _lit(f"{CARD_LABEL_PT}D"),
                                               "color": _solid("#8A8886")}}],
         },
         "vcObjects": {
-            "title": _vc_title(title, color="#605E5C", size="11D"),
+            "title": _vc_title(title, color="#605E5C", size=f"{CARD_TITLE_PT}D"),
             "visualHeader": [{"properties": {"show": _lit("false")}}],
             "visualHeaderTooltip": [{"properties": {"show": _lit("false")}}],
             "background": [{"properties": {"show": _lit("true")}}],
@@ -366,15 +393,15 @@ def build_report(state, config):
         _card("c3", 528, CARD_Y, 238, CARD_H, "crm_customer_profile", "At Risk %", ALERT, "Part de la base"),
         _card("c4", 778, CARD_Y, 238, CARD_H, "crm_customer_profile", "Revenue at Risk", ALERT, "CA menacé"),
         _card("c5", 1028, CARD_Y, 224, CARD_H, "crm_customer_profile", "CLV at Risk", PREMIUM, "Valeur vie menacée"),
-        _column("col1", 28, 202, 620, 248, "crm_customer_profile", "risk_band",
+        _column("col1", 28, ROW1_Y, 620, ROW1_H, "crm_customer_profile", "risk_band",
                 "crm_customer_profile", "Profiled Customers",
                 "Clients par bande de risque (Prospect = jamais commandé)"),
-        _bar("b1", 660, 202, 592, 248, "crm_customers", "lifecycle_stage",
+        _bar("b1", 660, ROW1_Y, 592, ROW1_H, "crm_customers", "lifecycle_stage",
              "crm_customer_profile", "Avg Churn Score",
              "Score de churn moyen par étape de cycle de vie"),
-        _line("l1", 28, 462, 760, 246, "orders", "order_at", "orders", "Revenue",
+        _line("l1", 28, ROW2_Y, 760, ROW2_H, "orders", "order_at", "orders", "Revenue",
               "Chiffre d'affaires dans le temps (le décrochage suit la campagne)", color=C_BLUE),
-        _donut("dn1", 800, 462, 452, 246, "crm_customers", "lifecycle_stage",
+        _donut("dn1", 800, ROW2_Y, 452, ROW2_H, "crm_customers", "lifecycle_stage",
                "crm_customers", "Total Customers", "Répartition du cycle de vie"),
     ]
 
@@ -386,16 +413,16 @@ def build_report(state, config):
         _card("c8", 528, CARD_Y, 238, CARD_H, "marketing_events", "Unsubscribes", ALERT, "Désabonnements"),
         _card("c9", 778, CARD_Y, 238, CARD_H, "marketing_events", "Unsubscribe Rate", ALERT, "Taux de désabo."),
         _card("c10", 1028, CARD_Y, 224, CARD_H, "marketing_events", "Open Rate", GOOD, "Taux d'ouverture"),
-        _bar("b2", 28, 202, 620, 248, "marketing_campaigns", "campaign_name",
+        _bar("b2", 28, ROW1_Y, 620, ROW1_H, "marketing_campaigns", "campaign_name",
              "marketing_sends", "Sends per Customer",
              f"Envois par client et par campagne — « {culprit} » décroche"),
-        _bar("b3", 660, 202, 592, 248, "marketing_campaigns", "campaign_name",
+        _bar("b3", 660, ROW1_Y, 592, ROW1_H, "marketing_campaigns", "campaign_name",
              "marketing_events", "Unsubscribes",
              "Désabonnements par campagne — même coupable"),
-        _column("col2", 28, 462, 760, 246, "marketing_campaigns", "campaign_name",
+        _column("col2", 28, ROW2_Y, 760, ROW2_H, "marketing_campaigns", "campaign_name",
                 "marketing_events", "Open Rate",
                 "Taux d'ouverture par campagne (l'engagement s'effondre)", labels=False),
-        _donut("dn2", 800, 462, 452, 246, "marketing_events", "event_type",
+        _donut("dn2", 800, ROW2_Y, 452, ROW2_H, "marketing_events", "event_type",
                "marketing_events", "Total Events", "Événements email par type"),
     ]
 
@@ -407,11 +434,11 @@ def build_report(state, config):
         _card("c13", 528, CARD_Y, 238, CARD_H, "orders", "Average Order Value", NEUTRAL, "Panier moyen"),
         _card("c14", 778, CARD_Y, 238, CARD_H, "crm_customer_profile", "Revenue at Risk", ALERT, "CA menacé"),
         _card("c15", 1028, CARD_Y, 224, CARD_H, "returns", "Return Rate", ALERT, "Taux de retour"),
-        _bar("b4", 28, 202, 620, 248, "crm_customers", "lifecycle_stage", "orders", "Revenue",
+        _bar("b4", 28, ROW1_Y, 620, ROW1_H, "crm_customers", "lifecycle_stage", "orders", "Revenue",
              "Chiffre d'affaires par étape de cycle de vie"),
-        _bar("b5", 660, 202, 592, 248, "products", "category", "order_lines", "Product Revenue",
+        _bar("b5", 660, ROW1_Y, 592, ROW1_H, "products", "category", "order_lines", "Product Revenue",
              "Chiffre d'affaires par catégorie produit"),
-        _table("t1", 28, 462, 1224, 246, [
+        _table("t1", 28, ROW2_Y, 1224, ROW2_H, [
             ("crm_customer_profile", "risk_band", "Column"),
             ("crm_customer_profile", "Profiled Customers", "Measure"),
             ("crm_customer_profile", "Avg Churn Score", "Measure"),
@@ -430,12 +457,12 @@ def build_report(state, config):
         _card("c18", 528, CARD_Y, 238, CARD_H, "crm_customer_profile", "Avg Engagement Rate", NEUTRAL, "Engagement moyen"),
         _card("c19", 778, CARD_Y, 238, CARD_H, "crm_customer_profile", "Avg NPS", NEUTRAL, "NPS moyen"),
         _card("c20", 1028, CARD_Y, 224, CARD_H, "crm_interactions", "Unresolved Negative", ALERT, "Litiges ouverts"),
-        _bar("b6", 28, 202, 620, 248, "crm_segments", "segment_name",
+        _bar("b6", 28, ROW1_Y, 620, ROW1_H, "crm_segments", "segment_name",
              "crm_customer_segments", "Segment Memberships",
              f"Effectif par segment — {victim} est la cible à suspendre"),
-        _donut("dn3", 660, 202, 592, 248, "crm_interactions", "sentiment",
+        _donut("dn3", 660, ROW1_Y, 592, ROW1_H, "crm_interactions", "sentiment",
                "crm_interactions", "Total Interactions", "Sentiment des interactions support"),
-        _table("t2", 28, 462, 1224, 246, [
+        _table("t2", 28, ROW2_Y, 1224, ROW2_H, [
             ("crm_customers", "last_name", "Column"),
             ("crm_customers", "city", "Column"),
             ("crm_customers", "lifecycle_stage", "Column"),
@@ -527,12 +554,21 @@ def report_field_refs(report):
     return measures, columns
 
 
+def _font_pt(objects, key, default=None):
+    """Read a fontSize like '30D' out of a visual's objects/vcObjects blob."""
+    try:
+        raw = objects[key][0]["properties"]["fontSize"]["expr"]["Literal"]["Value"]
+    except (KeyError, IndexError, TypeError):
+        return default
+    return float(str(raw).rstrip("Dd"))
+
+
 def validate_layout(report):
     """Offline geometry checks — returns a list of human-readable problems.
 
-    Catches the two failure modes that ship silently: text clipped because its
-    box is shorter than the font needs, and visuals that overlap or fall off the
-    page. Power BI renders all of these without any warning.
+    Catches the failure modes that ship silently: text clipped because its box
+    is shorter than the stack it renders, and visuals that overlap or fall off
+    the page. Power BI renders all of these without any warning.
     """
     problems = []
     for sec in report["sections"]:
@@ -544,6 +580,7 @@ def validate_layout(report):
             kind = sv.get("visualType", "?")
             name = cfg.get("name", "?")
             x, y, w, h = v["x"], v["y"], v["width"], v["height"]
+            z = v.get("z", 1)
 
             if x < 0 or y < 0 or x + w > PAGE_W or y + h > PAGE_H:
                 problems.append(
@@ -559,7 +596,24 @@ def validate_layout(report):
                             problems.append(
                                 f"{page}/{name}: box is {h}px tall for {pt:g}pt text "
                                 f"(needs {need}px) — text will be clipped")
-            if kind != "basicShape":       # bands are deliberate z=0 backgrounds
+
+            elif kind == "cardVisual":
+                # A card stacks three texts. Sizing against the callout alone
+                # clips the category label — the defect that shipped on all 20.
+                stack = [_font_pt(sv.get("vcObjects", {}), "title"),
+                         _font_pt(sv.get("objects", {}), "calloutValue"),
+                         _font_pt(sv.get("objects", {}), "categoryLabel")]
+                stack = [p for p in stack if p]
+                if stack:
+                    need = card_height(*stack)
+                    if h < need:
+                        problems.append(
+                            f"{page}/{name}: card is {h}px tall for a "
+                            f"{'+'.join(f'{p:g}' for p in stack)}pt stack "
+                            f"(needs {need}px) — the bottom label will be clipped")
+
+            # z=0 is the deliberate header background sitting under its text.
+            if z >= 1:
                 boxes.append((name, kind, x, y, w, h))
 
         for i, (n1, k1, x1, y1, w1, h1) in enumerate(boxes):

@@ -292,23 +292,47 @@ colour-blind-distinguishable.
 ### Layout is not self-checking — validate it
 
 Power BI **never shrinks a font to fit its box and never warns**: it clips. A textbox that is
-30px tall with 17pt text simply loses its descenders, and the report ships looking broken.
-Nothing in the deploy pipeline notices, because the JSON is perfectly valid.
+30px tall with 17pt text loses its descenders, and a card sized against its callout alone cuts
+off the label underneath. Nothing in the deploy pipeline notices — the JSON is perfectly valid.
 
-Empirical rule now enforced in code — `height >= font_pt * 2.2`
-(1pt = 4/3 px @96 DPI, line-height ≈1.35, padding ≈8px):
+The height model has **two terms, and conflating them is what makes estimates wrong**:
 
-| Element | Font | Minimum height |
-|---|---|---|
-| Page title | 17pt | 38px |
-| Page subtitle | 10pt | 22px |
-| Header band | — | 76px (10 pad + 38 + 22 + 6 pad) |
+- **line height is proportional** to the font — 1pt = 4/3 px at 96 DPI, line box ≈1.35 × em,
+  so **1.8 px per pt**;
+- **padding / chrome is constant** and depends on the control, not the font — ≈8px for a
+  textbox, ≈24px for a card.
 
-`deploy_report.py` derives every header coordinate from `text_height(font_pt)` instead of
-hard-coding pixels, and `validate_layout(report)` **blocks the deploy** on three defect classes:
-out-of-page bounds, text too large for its box, and overlapping visuals (`basicShape` excluded —
-it is the intentional z=0 background). `tests/test_smoke.py` asserts both that the built report is
-clean *and* that the rule rejects the geometry that originally shipped.
+A single "px per pt" multiplier cannot express a constant term: it under-sizes small text and
+over-sizes large text. A first attempt used `height >= pt * 2.2`, which passed a 10pt subtitle in
+a 22px box that actually needs 26px. Keep the terms separate:
+
+```python
+line_px(pt)        = pt * 1.8
+text_height(pt)    = ceil(line_px(pt) + 8)          # textbox
+card_height(*pts)  = ceil(sum(line_px(p)) + 24)     # cardVisual stacks 3 texts
+```
+
+| Element | Font(s) | Needs | Box |
+|---|---|---|---|
+| Page title | 17pt | 39px | 42 |
+| Page subtitle | 10pt | 26px | 26 |
+| Header band | — | 74px | 80 |
+| KPI card | 11 + **24** + 9pt | 104px | 112 |
+
+**A card is not one line.** It stacks `vcObjects.title` (11pt), `calloutValue` and
+`categoryLabel` (9pt). With a 30pt callout the stack needs 114px in a 112px box, so the category
+label was clipped on **all 20 cards**. The vertical grid has no 10px to give, so the fix is the
+font — callout 30pt → 24pt (104px, 8px of margin) — not the box. Shrinking the box instead makes
+it worse.
+
+`validate_layout(report)` **blocks the deploy** on four defect classes: out-of-page bounds, text
+too large for its box, **card stacks too tall for their card**, and overlapping visuals.
+Collisions are only evaluated at `z >= 1`; the header band is a deliberate `z = 0` background
+sitting under its own text and would otherwise raise 4 false positives per page.
+
+Regression harness: `test_validator_detects_the_geometry_that_shipped` re-injects the original
+geometry and asserts **exactly 32 defects** (8 clipped texts + 4 overlaps + 20 cards), so the
+guard itself cannot silently stop working.
 
 ### Validate columns, not just measures
 
@@ -399,7 +423,8 @@ by name, and only creates when neither exists. Re-running resumes; it never dupl
 | `COUNTROWS(FILTER(...))` → BLANK | KPI cards show blank instead of 0 |
 | **Renaming a measure is a breaking change** | live reports fail at render, no warning; keep a hidden alias |
 | **Validate columns, not just measures** | `ROW("v",[M])` misses broken column refs entirely |
-| **Power BI clips text, never shrinks it** | `height >= font_pt * 2.2`, or the banner ships cut off |
+| **Power BI clips text, never shrinks it** | `line_px = pt * 1.8` **plus** a constant pad (8px textbox, 24px card); a single multiplier is wrong |
+| **A card stacks 3 texts** (title + callout + label) | sizing on the callout alone clips the label; fix the font, not the box |
 | **`updateDefinition` can return Succeeded and apply nothing** | always read the definition back |
 | Capacity pauses when idle | resume before deploy or demo |
 | Never `az rest` from a Python subprocess | it hangs; use `requests` + `az account get-access-token` |

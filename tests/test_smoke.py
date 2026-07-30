@@ -437,6 +437,89 @@ def test_textbox_height_rule_rejects_a_too_small_box():
     assert dr.text_height(10) > 20, "10pt in a 20px box must be rejected"
 
 
+def test_height_model_keeps_padding_separate_from_line_height():
+    """A single px-per-pt multiplier cannot express a constant padding term.
+
+    Folding padding into a multiplier under-sizes small text and over-sizes
+    large text — that is how a 10pt subtitle got a 22px box when it needs 26.
+    """
+    import deploy_report as dr
+    # doubling the font must NOT double the required height: padding is constant
+    assert dr.text_height(20) < 2 * dr.text_height(10)
+    # the proportional part alone must scale linearly
+    assert dr.line_px(20) == pytest.approx(2 * dr.line_px(10))
+
+
+def test_card_height_accounts_for_the_whole_text_stack():
+    """A card stacks title + callout + label; sizing on the callout alone clips."""
+    import deploy_report as dr
+    assert dr.card_height(11, 30, 9) > 112, (
+        "the 30pt callout stack must be rejected in a 112px card")
+    assert dr.card_height(11, dr.CARD_VALUE_PT, 9) <= dr.CARD_H, (
+        "the shipped card fonts must fit the shipped card height")
+
+
+def test_every_card_is_tall_enough_for_its_own_fonts(report_def):
+    import deploy_report as dr
+    seen = 0
+    for section in report_def["report"]["sections"]:
+        for vc in section["visualContainers"]:
+            sv = json.loads(vc["config"])["singleVisual"]
+            if sv["visualType"] != "cardVisual":
+                continue
+            seen += 1
+            stack = [dr._font_pt(sv.get("vcObjects", {}), "title"),
+                     dr._font_pt(sv.get("objects", {}), "calloutValue"),
+                     dr._font_pt(sv.get("objects", {}), "categoryLabel")]
+            stack = [p for p in stack if p]
+            assert len(stack) == 3, "a card should declare three font sizes"
+            assert vc["height"] >= dr.card_height(*stack)
+    assert seen == 20, f"expected 20 cards, found {seen}"
+
+
+def test_validator_detects_the_geometry_that_shipped(report_def):
+    """Regression harness: re-inject the original geometry and count the defects.
+
+    32 = 4 pages x (title + subtitle clipped + their overlap) + 20 cards whose
+    category label was cut off by the 30pt callout.
+    """
+    import copy
+    import deploy_report as dr
+    old = copy.deepcopy(report_def["report"])
+    for s in old["sections"]:
+        for v in s["visualContainers"]:
+            c = json.loads(v["config"])
+            sv = c["singleVisual"]
+            kind = sv["visualType"]
+            if kind == "basicShape" and v["y"] == 0:
+                v["height"] = 64
+            elif kind == "textbox" and v["y"] == dr.HEADER_PAD_TOP:
+                v["y"], v["height"] = 12, 30
+            elif kind == "textbox":
+                v["y"], v["height"] = 40, 20
+            elif kind == "cardVisual":
+                v["y"], v["height"] = 78, 112
+                (sv["objects"]["calloutValue"][0]["properties"]
+                 ["fontSize"]["expr"]["Literal"]["Value"]) = "30D"
+                v["config"] = json.dumps(c)
+    problems = dr.validate_layout(old)
+    assert len(problems) == 32, f"expected 32 defects, got {len(problems)}"
+    assert sum("card is" in p for p in problems) == 20
+    assert sum("overlaps" in p for p in problems) == 4
+    assert sum("text will be clipped" in p for p in problems) == 8
+
+
+def test_header_band_is_not_counted_as_an_overlap(report_def):
+    """The z=0 band sits under its own text on purpose — 4 false positives/page."""
+    import deploy_report as dr
+    bands = [vc for s in report_def["report"]["sections"]
+             for vc in s["visualContainers"]
+             if json.loads(vc["config"])["singleVisual"]["visualType"] == "basicShape"]
+    assert bands, "no header band found"
+    assert all(vc.get("z") == 0 for vc in bands), "the band must stay at z=0"
+    assert not [p for p in dr.validate_layout(report_def["report"]) if "overlaps" in p]
+
+
 def test_header_band_contains_its_text(report_def):
     """The banner must be tall enough for the title and subtitle stacked inside it."""
     import deploy_report as dr
