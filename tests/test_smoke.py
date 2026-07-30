@@ -683,16 +683,50 @@ def test_height_model_keeps_padding_separate_from_line_height():
     assert dr.line_px(20) == pytest.approx(2 * dr.line_px(10))
 
 
-def test_card_height_accounts_for_the_whole_text_stack():
-    """A card stacks title + callout + label; sizing on the callout alone clips."""
-    import deploy_report_arc as dr
-    assert dr.card_height(11, 30, 9) > 112, (
-        "the 30pt callout stack must be rejected in a 112px card")
-    assert dr.card_height(11, dr.CARD_VALUE_PT, 9) <= dr.CARD_H, (
-        "the shipped card fonts must fit the shipped card height")
+def test_the_card_stack_that_clipped_on_screen_is_rejected():
+    """The one data point measured against the real renderer.
+
+    A 112px card holding title 11pt + callout 24pt + label 9pt shipped to Fabric
+    and rendered with its bottom label cut off. The model in force at the time
+    computed 112px and passed it. Whatever the constants become, that stack must
+    never fit 112px again — this is evidence, not a derivation.
+    """
+    import deploy_report as dr
+    import deploy_report_arc as arc
+
+    assert arc.card_height(11, 24, 9) > 112, (
+        "the stack observed clipped in Fabric must not fit a 112px card")
+
+    need = (dr._text_height(11) + dr._text_height(24)
+            + dr._text_height(9) + dr.CARD_CHROME)
+    assert need > 112, "same stack, same verdict required in deploy_report"
 
 
-def test_every_card_is_tall_enough_for_its_own_fonts(report_def):
+def test_both_generators_size_a_card_identically():
+    """Two generators disagreeing on the fit is how one of them ships clipped."""
+    import deploy_report as dr
+    import deploy_report_arc as arc
+
+    for pts in [(11, 24), (11, 24, 9), (11, 30, 9), (12, 20)]:
+        mine = dr._text_height(pts[0]) + dr._text_height(pts[1]) + dr.CARD_CHROME
+        if len(pts) == 3:
+            mine += dr._text_height(pts[2])
+        assert abs(mine - arc.card_height(*pts)) <= 1, (
+            f"{pts}: deploy_report says {mine:.1f}px, arc says {arc.card_height(*pts)}px")
+
+
+def test_a_hidden_label_is_not_charged_for_space():
+    """show:false frees its line — but only when it is explicitly off."""
+    import deploy_report_arc as arc
+
+    off = {"categoryLabel": [{"properties": {"show": {"expr": {"Literal": {"Value": "false"}}}}}]}
+    assert not arc._shown(off, "categoryLabel")
+    # Absent means Power BI renders its default, so it must still be charged.
+    assert arc._shown({}, "categoryLabel"), (
+        "an undeclared group renders by default and must count as taking space")
+
+
+def test_every_card_is_tall_enough_for_what_it_actually_renders(report_def):
     import deploy_report_arc as dr
     seen = 0
     for section in report_def["report"]["sections"]:
@@ -701,13 +735,28 @@ def test_every_card_is_tall_enough_for_its_own_fonts(report_def):
             if sv["visualType"] != "cardVisual":
                 continue
             seen += 1
+            objs = sv.get("objects", {})
             stack = [dr._font_pt(sv.get("vcObjects", {}), "title"),
-                     dr._font_pt(sv.get("objects", {}), "calloutValue"),
-                     dr._font_pt(sv.get("objects", {}), "categoryLabel")]
+                     dr._font_pt(objs, "calloutValue")]
+            if dr._shown(objs, "categoryLabel"):
+                stack.append(dr._font_pt(objs, "categoryLabel", dr.CARD_LABEL_PT))
             stack = [p for p in stack if p]
-            assert len(stack) == 3, "a card should declare three font sizes"
-            assert vc["height"] >= dr.card_height(*stack)
+            assert vc["height"] >= dr.card_height(*stack), (
+                f"card {vc['height']}px too short for {stack}")
     assert seen == 20, f"expected 20 cards, found {seen}"
+
+
+def test_cards_do_not_repeat_their_title_in_english(report_def):
+    """The label under the value was the raw measure name, duplicating the
+    French title above it — and it was the line that got clipped."""
+    import deploy_report_arc as dr
+    for section in report_def["report"]["sections"]:
+        for vc in section["visualContainers"]:
+            sv = json.loads(vc["config"])["singleVisual"]
+            if sv["visualType"] != "cardVisual":
+                continue
+            assert not dr._shown(sv.get("objects", {}), "categoryLabel"), (
+                "the category label repeats the title and must stay off")
 
 
 def test_validator_detects_the_geometry_that_shipped(report_def):

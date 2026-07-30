@@ -109,7 +109,8 @@ RESERVED_REPORT_IDS = {"ace677a4-02a7-4cbf-bc16-8b695fea3c7d"}
 # while being wrong by -8px is exactly the defect that shipped.
 LINE_PX_PER_PT = 1.8      # 96/72 DPI * 1.35 line-height
 TEXTBOX_PAD = 8           # textbox inner padding, top + bottom
-CARD_CHROME = 32          # card border + inner margins + one container pad
+CARD_CHROME = 24          # card border + inner margins (the container pad is
+                          # counted per stacked text, see card_height)
 
 
 def line_px(font_pt):
@@ -128,8 +129,13 @@ def card_height(*font_pts):
     A card is not one line: it stacks its vcObjects.title, its calloutValue and
     its categoryLabel. Sizing it against the callout alone clips the label at
     the bottom — which is exactly what shipped.
+
+    Each stacked text keeps its own padding. An earlier model collapsed the
+    per-block pads into one and computed 112px for an 11+24+9 stack; that exact
+    card rendered with its bottom label clipped in Fabric. A rendered page beats
+    a derivation, so the pads no longer collapse.
     """
-    return int(math.ceil(sum(line_px(p) for p in font_pts) + CARD_CHROME))
+    return int(math.ceil(sum(line_px(p) + TEXTBOX_PAD for p in font_pts) + CARD_CHROME))
 
 
 HEADER_TITLE_PT, HEADER_SUB_PT = 17, 10
@@ -145,7 +151,7 @@ CARD_TITLE_PT, CARD_VALUE_PT, CARD_LABEL_PT = 11, 24, 9
 
 MARGIN = 28
 CARD_Y = HEADER_H + 8                                  # 88
-CARD_H = 112                                           # needs card_height(11,24,9) = 104
+CARD_H = 112                                           # card_height(11,24) = 103
 ROW1_Y, ROW1_H = 208, 242                              # bottom stays at 450
 ROW2_Y, ROW2_H = 462, 246
 
@@ -223,8 +229,9 @@ def _card(name, x, y, w, h, table, measure, accent, title, z=1):
             "outline": [{"properties": {"show": _lit("false")}}],
             "calloutValue": [{"properties": {"fontSize": _lit(f"{CARD_VALUE_PT}D"), "bold": _lit("true"),
                                              "color": _solid(accent)}}],
-            "categoryLabel": [{"properties": {"show": _lit("true"), "fontSize": _lit(f"{CARD_LABEL_PT}D"),
-                                              "color": _solid("#8A8886")}}],
+            # Off on purpose: it repeats the raw English measure name under the
+            # French title that already says it, and it was the clipped line.
+            "categoryLabel": [{"properties": {"show": _lit("false")}}],
         },
         "vcObjects": {
             "title": _vc_title(title, color="#605E5C", size=f"{CARD_TITLE_PT}D"),
@@ -592,6 +599,20 @@ def _font_pt(objects, key, default=None):
     return float(str(raw).rstrip("Dd"))
 
 
+def _shown(objects, key):
+    """True unless the group is explicitly switched off.
+
+    Absence means Power BI applies its default, which is visible — so an unknown
+    group must be counted as taking space. Never infer "hidden" from a missing
+    fontSize: a group can render at its default size with no fontSize declared.
+    """
+    try:
+        raw = objects[key][0]["properties"]["show"]["expr"]["Literal"]["Value"]
+    except (KeyError, IndexError, TypeError):
+        return True
+    return str(raw).strip().lower() not in ("false", "'false'")
+
+
 def validate_layout(report):
     """Offline geometry checks — returns a list of human-readable problems.
 
@@ -629,9 +650,11 @@ def validate_layout(report):
             elif kind == "cardVisual":
                 # A card stacks three texts. Sizing against the callout alone
                 # clips the category label — the defect that shipped on all 20.
+                objs = sv.get("objects", {})
                 stack = [_font_pt(sv.get("vcObjects", {}), "title"),
-                         _font_pt(sv.get("objects", {}), "calloutValue"),
-                         _font_pt(sv.get("objects", {}), "categoryLabel")]
+                         _font_pt(objs, "calloutValue")]
+                if _shown(objs, "categoryLabel"):
+                    stack.append(_font_pt(objs, "categoryLabel", CARD_LABEL_PT))
                 stack = [p for p in stack if p]
                 if stack:
                     need = card_height(*stack)

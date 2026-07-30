@@ -68,16 +68,24 @@ One command: `python deploy_all.py` (idempotent, tenant-guarded).
   Two terms, kept separate: line height is **proportional**, padding/chrome is a **constant**.
   A single "px per pt" multiplier cannot express a constant and under-sizes small text.
   `min_height = pt * (96/72) * 1.35 + 8`  (1pt = 4/3 px @96 DPI, Segoe UI line box ~1.35, 8px pad).
-  A `cardVisual` stacks **three** texts — title + callout value + category label — and the padding
-  is **per container, not per line**: the three per-block pads collapse to one, then the card's own
-  chrome (~24px) is added on top. So `min_height = sum(pt) * 1.8 + 8 + 24`, i.e. `sum(pt) * 1.8 + 32`
-  — mirrored in the code as `… - 2 * TEXT_PAD + CARD_CHROME`. Do not write it as `+ 24`: that
-  under-reserves by 8px. This is the one that bites: a 112px card holding 11 + 30 + 9 pt needs
-  122px and silently clips its label. Shrink the callout font before growing the card, the row
-  grid rarely has 10 spare pixels.
-  **These constants (1.35, 8, 24) are calculated, never measured against the Power BI renderer.**
-  The only evidence they hold is a human looking at a rendered page. Treat them as a working
-  approximation, not a verified fact, and re-check visually when a font size changes.
+  A `cardVisual` stacks **three** texts — title + callout value + category label — and **each keeps
+  its own padding**: `min_height = sum(pt * 1.8 + 8) + 24`. The earlier model collapsed the three
+  pads into one (`sum(pt) * 1.8 + 32`) and was **disproved by a render**: a 112px card holding
+  11 + 24 + 9 pt computed 111.2, passed the validator, and shipped with its bottom label clipped on
+  screen. That single observation now outranks the derivation, and it is locked by
+  `test_the_card_stack_that_clipped_on_screen_is_rejected`.
+  **The one constant with evidence behind it is that stack; 1.35, 8 and 24 are still calculated.**
+  Re-check visually when a font size changes, and treat a passing validator as necessary, not
+  sufficient.
+  Before growing a card, ask what the third text is *for*: ours rendered the raw English measure
+  name under a French title that already said it. `show: false` on `categoryLabel` removed
+  duplicated content and dropped the need to 103px in the same 112px box — the row grid rarely has
+  10 spare pixels, but it always has a redundant label to spare.
+  A validator must model what is **rendered**, not what is declared: read `show`, and treat an
+  absent group as **visible** (that is Power BI's default). Inferring "hidden" from a missing
+  `fontSize` under-reserves.
+  **Both report generators must return the same number for the same stack** — there is a test for
+  it. Two generators disagreeing on the fit is how one of them ships clipped.
 - Header bands are `z=0` decoration with the title/subtitle textboxes at `z=1` on top; the overlap
   check therefore only considers `z >= 1`. Two textboxes that overlap by 2px is a real defect.
 - **Renaming a measure in a shared semantic model is a breaking change.** Fabric does not warn,

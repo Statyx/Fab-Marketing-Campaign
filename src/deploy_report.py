@@ -131,8 +131,11 @@ def _card(name, x, y, w, h, table, measure, accent, title, z=1):
             "outline": [{"properties": {"show": _lit("false")}}],
             "calloutValue": [{"properties": {"fontSize": _lit("24D"), "bold": _lit("true"),
                                              "color": _solid(accent)}}],
-            "categoryLabel": [{"properties": {"show": _lit("true"), "fontSize": _lit("9D"),
-                                              "color": _solid("#8A8886")}}],
+            # Off on purpose. It renders the raw measure name in English
+            # ("Sends per Customer") directly under the French title that already
+            # says the same thing ("Emails / Client") — duplicated content, and it
+            # was the line Power BI clipped. Two texts fit where three did not.
+            "categoryLabel": [{"properties": {"show": _lit("false")}}],
         },
         "vcObjects": {
             "title": _vc_title(title, color="#605E5C", size="11D"),
@@ -333,12 +336,13 @@ LINE_BOX = 1.35
 TEXT_PAD = 8.0
 
 # A cardVisual stacks title + callout value + category label, and adds its own
-# chrome (padding, inter-element spacing, rounded border). Padding is per
-# container, not per line, so the three per-block pads collapse to one:
-# need = sum(pt) * 1.8 + TEXT_PAD + CARD_CHROME.
+# chrome (padding, inter-element spacing, rounded border).
 #
-# NOTE: 1.35, 8 and 24 are calculated, never measured against the Power BI
-# renderer. A visual check of a rendered page is the only evidence they hold.
+# MEASURED, not calculated: a 112px card holding 11 + 24 + 9 pt rendered with its
+# bottom label clipped in Fabric, while the earlier model (which collapsed the
+# three per-block pads into one, `- 2 * TEXT_PAD`) computed 111.2px and passed it.
+# A rendered page beats a derivation, so the pads no longer collapse: each stacked
+# text keeps its own padding. Same case now needs 127px and is correctly rejected.
 CARD_CHROME = 24.0
 
 
@@ -355,6 +359,19 @@ def _font_pt(objects, group, default):
         return default
     m = re.match(r"(\d+(?:\.\d+)?)", str(raw))
     return float(m.group(1)) if m else default
+
+
+def _shown(objects, group):
+    """True unless the group is explicitly switched off.
+
+    Absence means Power BI applies its default, which is visible — so an
+    unknown group must be counted as taking space, never skipped.
+    """
+    try:
+        raw = objects[group][0]["properties"]["show"]["expr"]["Literal"]["Value"]
+    except (KeyError, IndexError, TypeError):
+        return True
+    return str(raw).strip().lower() not in ("false", "'false'")
 
 
 def validate_layout(report):
@@ -394,14 +411,15 @@ def validate_layout(report):
             elif vtype == "cardVisual":
                 objs = sv.get("objects", {})
                 callout = _font_pt(objs, "calloutValue", 30.0)
-                category = _font_pt(objs, "categoryLabel", 9.0)
                 title = _font_pt(sv.get("vcObjects", {}), "title", 12.0)
-                need = (_text_height(title) + _text_height(callout)
-                        + _text_height(category) - 2 * TEXT_PAD + CARD_CHROME)
+                need = _text_height(title) + _text_height(callout) + CARD_CHROME
+                # A hidden category label occupies no space — but only count it as
+                # hidden if it is explicitly switched off, never by omission.
+                if _shown(objs, "categoryLabel"):
+                    need += _text_height(_font_pt(objs, "categoryLabel", 9.0))
                 if h < need:
                     problems.append(
-                        f"{page}/{name}: card stack clipped — title {title:g}pt + "
-                        f"value {callout:g}pt + label {category:g}pt needs "
+                        f"{page}/{name}: card stack clipped — needs "
                         f"{need:.0f}px, box is {h}px")
 
             elif "title" in sv.get("vcObjects", {}):
