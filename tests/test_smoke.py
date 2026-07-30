@@ -571,3 +571,51 @@ def test_no_duplicate_measure_names(model_bim):
     dupes = {n for n in names if names.count(n) > 1}
     assert not dupes, f"duplicate measure names: {sorted(dupes)}"
 
+
+
+# -- Item ownership ----------------------------------------------------------
+
+@pytest.fixture(scope="module")
+def dr():
+    import deploy_report
+    return deploy_report
+
+
+@pytest.fixture(scope="module")
+def reserved(dr):
+    return next(iter(dr.RESERVED_REPORT_IDS))
+
+
+def test_reserved_item_is_never_updated_from_state(dr, reserved):
+    """state.json still points at the item another generator owns.
+
+    Two sessions published to the same Fabric report item and overwrote each
+    other for a day. The arbitration gave it to the main checkout; this makes
+    the arbitration mechanical instead of a promise.
+    """
+    rpt_id, name = dr.resolve_report_target(
+        {"report_id": reserved}, "RPT_Marketing_Churn", lambda n: None)
+    assert rpt_id != reserved, "would overwrite the item owned by another generator"
+    assert name != "RPT_Marketing_Churn", (
+        "publishing under the same name lets the next run find the reserved item again")
+
+
+def test_reserved_item_is_never_found_back_by_name(dr, reserved):
+    """A fresh state must not re-collide by looking the reserved item up by name."""
+    rpt_id, name = dr.resolve_report_target(
+        {}, "RPT_Marketing_Churn",
+        lambda n: reserved if n == "RPT_Marketing_Churn" else None)
+    assert rpt_id != reserved
+    assert name.endswith(dr.FORK_SUFFIX)
+
+
+def test_own_item_is_reused_not_duplicated(dr, reserved):
+    """Once the fork exists, deploying again updates it instead of piling up items."""
+    assert dr.resolve_report_target(
+        {"report_id": "0000-mine"}, "RPT_Marketing_Churn", lambda n: None) == (
+            "0000-mine", "RPT_Marketing_Churn")
+    assert dr.resolve_report_target(
+        {}, "RPT_Marketing_Churn",
+        lambda n: {"RPT_Marketing_Churn": reserved,
+                   "RPT_Marketing_Churn" + dr.FORK_SUFFIX: "0000-fork"}.get(n)) == (
+            "0000-fork", "RPT_Marketing_Churn" + dr.FORK_SUFFIX)

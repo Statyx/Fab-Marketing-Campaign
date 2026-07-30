@@ -66,6 +66,15 @@ from helpers import (load_config, load_state, save_state, get_fabric_token, fabr
 
 PAGE_W, PAGE_H = 1280, 720
 
+# ── Item ownership ──────────────────────────────────────────────────────────
+# Two generators published to the SAME Fabric report item and silently
+# overwrote each other's work for a full day. Arbitration (Clément, 2026-07-30)
+# gave that item to the main checkout's src/deploy_report.py. An agreement is
+# not a safeguard, so the constraint is encoded here: this generator creates a
+# distinct item rather than updating a reserved one, whatever state.json says.
+RESERVED_REPORT_IDS = {"ace677a4-02a7-4cbf-bc16-8b695fea3c7d"}
+FORK_SUFFIX = "_wt"
+
 # ── Text metrics ────────────────────────────────────────────────────────────
 # A Power BI control clips its content when the box is shorter than the text it
 # stacks. It does not shrink the font and it does not warn — the text is simply
@@ -655,6 +664,20 @@ def validate_fields(report, ws_id, sm_id):
     return broken, len(measures), len(columns)
 
 
+def resolve_report_target(state, rpt_name, lookup):
+    """Choose which item to publish to, never one reserved for another generator.
+
+    `lookup(name)` returns an item id or None. Returning a *new* name when the
+    stored id is reserved is what stops the next run from finding the reserved
+    item again by name and re-colliding with it.
+    """
+    rpt_id = state.get("report_id") or lookup(rpt_name)
+    if rpt_id not in RESERVED_REPORT_IDS:
+        return rpt_id, rpt_name
+    fork_name = rpt_name + FORK_SUFFIX
+    return lookup(fork_name), fork_name
+
+
 def main():
     config = load_config()
     state = load_state()
@@ -694,12 +717,16 @@ def main():
          "payload": b64encode_json(base_theme), "payloadType": "InlineBase64"},
     ]
 
-    rpt_id = state.get("report_id")
-    if not rpt_id:
+    def lookup(name):
         try:
-            rpt_id = find_item(token, api, ws_id, rpt_name, "Report")["id"]
+            return find_item(token, api, ws_id, name, "Report")["id"]
         except RuntimeError:
-            pass
+            return None
+
+    rpt_id, rpt_name = resolve_report_target(state, rpt_name, lookup)
+    if rpt_name != config["report_name"]:
+        print(f"   '{config['report_name']}' is reserved for another generator "
+              f"— publishing to '{rpt_name}' instead")
 
     if rpt_id:
         resp = requests.post(f"{api}/workspaces/{ws_id}/reports/{rpt_id}/updateDefinition",
