@@ -40,7 +40,7 @@ from pathlib import Path
 import requests
 
 sys.path.insert(0, str(Path(__file__).parent))
-from helpers import load_config, load_state, print_step
+from helpers import load_config, load_state, print_step, ensure_tenant
 from deploy_report import build_report
 
 PBI = "https://api.powerbi.com/v1.0/myorg"
@@ -104,6 +104,7 @@ def build_dax(dim, measure):
 
 def main():
     config = load_config()
+    ensure_tenant(config, quiet=True)   # a wrong tenant reads as 401 on every visual
     state = load_state()
     ws, sm_id = state.get("workspace_id"), state.get("semantic_model_id")
     if not ws or not sm_id:

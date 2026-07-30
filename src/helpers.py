@@ -40,6 +40,33 @@ def save_state(state: Dict[str, Any]):
         json.dump(state, f, indent=2)
 
 
+def ensure_tenant(cfg: Optional[Dict[str, Any]] = None, quiet: bool = False):
+    """Pin az to the right subscription/tenant (az silently flips to corp).
+
+    Every script that talks to Fabric or Power BI needs this, not just the
+    orchestrator. On the wrong tenant the token is perfectly valid — it just
+    belongs to another directory — so the symptom is an authorisation error on
+    a resource the identity genuinely cannot see. The Fabric API answers 404
+    EntityNotFound, the Power BI REST API answers **401 with an empty body**.
+    That 401 reads exactly like an expired token and sends you diagnosing auth
+    instead of identity; it once turned a healthy report into a fake 0/35.
+    """
+    cfg = cfg if cfg is not None else load_config()
+    sub = cfg.get("az_subscription")
+    if not sub:
+        print("!  No 'az_subscription' in config.yaml — ensure az is on the correct tenant "
+              "(404 EntityNotFound, or 401 on Power BI, = wrong tenant).")
+        return
+    try:
+        subprocess.run(["az", "account", "set", "--subscription", sub],
+                       shell=True, check=True, capture_output=True)
+        if not quiet:
+            print(f"OK  az subscription set to '{sub}'")
+    except subprocess.CalledProcessError as e:
+        detail = (e.stderr or b"").decode(errors="replace").strip()
+        raise RuntimeError(f"Could not set az subscription '{sub}': {detail or e}")
+
+
 def get_fabric_token() -> str:
     """Get Fabric API access token via Azure CLI."""
     result = subprocess.check_output(

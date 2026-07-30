@@ -48,7 +48,8 @@ import time
 from pathlib import Path
 
 import requests
-from helpers import (load_config, load_state, get_fabric_token, fabric_headers, print_step)
+from helpers import (load_config, load_state, get_fabric_token, fabric_headers, print_step,
+                     ensure_tenant as _ensure_tenant)
 
 RAW = Path(__file__).parent.parent / "data" / "raw"
 
@@ -68,17 +69,12 @@ STEP_NAMES = [name for name, _ in STEPS]
 
 
 def ensure_tenant(cfg):
-    """Pin az to the right subscription/tenant (az silently flips to corp)."""
-    sub = cfg.get("az_subscription")
-    if not sub:
-        print("!  No 'az_subscription' in config.yaml — ensure az is on the correct tenant "
-              "(404 EntityNotFound = wrong tenant).")
-        return
-    try:
-        subprocess.check_call(["az", "account", "set", "--subscription", sub], shell=True)
-        print(f"OK  az subscription set to '{sub}'")
-    except subprocess.CalledProcessError as e:
-        raise RuntimeError(f"Could not set az subscription '{sub}': {e}")
+    """Pin az to the right subscription/tenant — see helpers.ensure_tenant.
+
+    Kept as a thin alias so the orchestrator's step list stays readable; the
+    implementation is shared so standalone scripts get the same guard.
+    """
+    _ensure_tenant(cfg)
 
 
 def select_steps(args):

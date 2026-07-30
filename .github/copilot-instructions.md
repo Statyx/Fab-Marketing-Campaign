@@ -105,6 +105,16 @@ One command: `python deploy_all.py` (idempotent, tenant-guarded).
   verbatim). Unused ones are still dropped.
 - **`updateDefinition` can return 202/Succeeded while applying nothing** → always read the
   definition back and compare before declaring success.
+- **A wrong `az` tenant does not look like an auth problem — it looks like a broken artefact.**
+  `az` silently flips back to the corporate tenant. The token stays valid and lists 172 workspaces
+  — of the *other* directory — so Fabric answers 404 EntityNotFound and the Power BI REST API
+  answers **401 with an empty body**. That 401 reads as "expired token" and sends you diagnosing
+  auth while the report is healthy: it once turned a passing report into a fake 0/35 and nearly
+  got its content rewritten. Before believing any Fabric failure, check
+  `az account show --query tenantId` against `config.yaml → tenant_id`.
+  The guard is `helpers.ensure_tenant(cfg)`, called from **every** entrypoint's `main()`
+  (`deploy_all`, `deploy_report`, `deploy_report_arc`, `validate_report`) — there is a test that
+  fails if a new one forgets. One shared implementation, so it cannot drift between scripts.
 - Capacity pauses when idle → resume before deploy/demo.
 - Never use `az rest` from a Python subprocess (hangs). Use `requests` + `az account get-access-token`.
 - PowerShell `Set-Content -Encoding utf8` writes a **BOM** and breaks JSON parsing → use

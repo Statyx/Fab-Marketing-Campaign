@@ -1029,3 +1029,39 @@ def test_readback_parses_the_dax_not_just_the_name(dsm, monkeypatch):
     assert live[("t", "Product Revenue")] == "SUM(order_lines[line_total_eur])"
     assert live[("t", "Buyers")] == "DISTINCTCOUNT(orders[customer_id])"
 
+
+
+# --- tenant pinning -------------------------------------------------------
+# az silently flips back to the corporate tenant. The token stays valid, so the
+# symptom is not "auth expired" but "this item does not exist / 401" on a
+# perfectly healthy artefact. It once turned a working report into a fake 0/35.
+
+def test_every_fabric_entrypoint_pins_the_tenant():
+    import inspect
+    import deploy_all, deploy_report, deploy_report_arc, validate_report
+
+    for mod in (deploy_all, deploy_report, deploy_report_arc, validate_report):
+        src = inspect.getsource(mod.main)
+        assert "ensure_tenant" in src, (
+            f"{mod.__name__}.main() must pin the az subscription before "
+            f"calling Fabric, or a tenant flip reads as a broken artefact")
+
+
+def test_ensure_tenant_is_shared_not_reimplemented():
+    """One implementation, so the guard cannot drift between scripts."""
+    import helpers, deploy_all
+    assert callable(helpers.ensure_tenant)
+    body = inspect_source(deploy_all.ensure_tenant)
+    assert "az account set" not in body, (
+        "deploy_all must delegate to helpers.ensure_tenant, not re-implement it")
+
+
+def inspect_source(fn):
+    import inspect
+    return inspect.getsource(fn)
+
+
+def test_ensure_tenant_warns_instead_of_crashing_without_config(capsys):
+    import helpers
+    helpers.ensure_tenant({})
+    assert "az_subscription" in capsys.readouterr().out

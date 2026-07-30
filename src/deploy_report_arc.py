@@ -62,7 +62,8 @@ import requests
 
 sys.path.insert(0, str(Path(__file__).parent))
 from helpers import (load_config, load_state, save_state, get_fabric_token, fabric_headers,
-                     get_powerbi_token, b64encode_json, poll_operation, find_item, print_step)
+                     get_powerbi_token, b64encode_json, poll_operation, find_item, print_step,
+                     ensure_tenant)
 
 PAGE_W, PAGE_H = 1280, 720
 
@@ -722,6 +723,7 @@ def resolve_report_target(state, lookup):
 
 def main():
     config = load_config()
+    ensure_tenant(config, quiet=True)   # wrong tenant = 404/401 on a healthy item
     state = load_state()
     api = config["fabric_api_base"]
     ws_id = state.get("workspace_id")
