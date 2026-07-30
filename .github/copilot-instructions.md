@@ -105,6 +105,19 @@ One command: `python deploy_all.py` (idempotent, tenant-guarded).
   It under-reports any file with blank lines, whatever the source (`Get-Content`, a pipeline, a
   hand-made array). Proof: `@("a","","b") | Measure-Object -Line` → 2. For a real count use
   Python (`blob.count(b"\n")`).
+- **A clean merge is not a correct merge.** Git guarantees no textual collision, not the absence of
+  semantic redundancy. Merging two branches that independently learned the same lesson left
+  `copilot-instructions.md` stating four rules twice, with **no conflict** — different words, same
+  rule. After any merge that touches shared prose or tests, check for *duplicated meaning*, not just
+  markers. For test files that means scanning every module-scope `def`, not just `def test_` — a
+  duplicated fixture is worse than a duplicated test: pytest stays green and the surviving function
+  runs under the expected name with the wrong body. (Fixtures are module-scoped, so the same name in
+  two files is fine — unless a `conftest.py` exists, and then a local fixture silently shadows it.)
+- **Any literal that lands in the tenant is shared state.** `description`, `displayFolder`,
+  `aiInstructions` — if two generators word them differently, each alternating deploy flips them in
+  the live artefact. Invisible in code review, visible only in Fabric, impossible to attribute after
+  the fact. `aiInstructions` is the worst: it routes the Data Agent, so the agent's behaviour changes
+  between deploys with no code change. Align the wording across generators, don't just merge it.
 - Terminal PATH can be wiped by venv activation — restore from Machine+User env.
 
 ## Never claim "verified"
