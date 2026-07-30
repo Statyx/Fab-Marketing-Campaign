@@ -87,8 +87,18 @@ One command: `python deploy_all.py` (idempotent, tenant-guarded).
 - Never use `az rest` from a Python subprocess (hangs). Use `requests` + `az account get-access-token`.
 - PowerShell `Set-Content -Encoding utf8` writes a **BOM** and breaks JSON parsing → use
   `[System.IO.File]::WriteAllText(path, text, (New-Object System.Text.UTF8Encoding $false))`.
+- PowerShell `Measure-Object -Line` counts **non-empty lines only** — an empty string is 0 lines.
+  It under-reports any file with blank lines, whatever the source (`Get-Content`, a pipeline, a
+  hand-made array). Proof: `@("a","","b") | Measure-Object -Line` → 2. For a real count use
+  Python (`blob.count(b"\n")`).
 - Terminal PATH can be wiped by venv activation — restore from Machine+User env.
 
 ## Never claim "verified"
 Do not write that something works in docs, instructions or agent prompts unless a test output or a
 trace proves it. A false "verified" makes everything downstream retry a path that cannot work.
+
+**Scope your claim to the command you ran.** Four false statements in one thread shared one
+mechanism: a true command, then a sentence broader than what it covered. `git ls-tree main` says
+what main has — it says nothing about the other branch. Compare both sides in the same command
+(`Compare-Object (git ls-tree -r A --name-only) (git ls-tree -r B --name-only)`), and name the ref:
+`origin/main` and a local `main` can differ materially.
