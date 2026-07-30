@@ -223,24 +223,29 @@ visual that breaks this rule.
   count-style measure in the model does.
 - Prefer existing measures over ad-hoc aggregation; `discourageImplicitMeasures` is on.
 
-### Renaming a measure is a breaking API change
+### One shared model, two generators: the deploy is a union
 
 A semantic model is a **published contract**. Reports store measure references by name, so
 renaming or deleting one does not fail the deploy — it fails at *render time*, in the consumer,
 with `Something's wrong with one or more fields`. Fabric gives no warning at any point.
 
-This actually happened: `[Line Revenue]` was renamed to `[Product Revenue]`, the model deployed
-green, and a live report's Commerce page broke. The remediation pattern:
+Two generators publish to this one model, and each script defines the model *in full*. Pushing it
+therefore replaced everything: whoever deployed last erased the other's measures. That leaves only
+two bad options — crush the other side, or block the deploy until someone merges by hand.
 
-1. Add the new name.
-2. Keep the old name as a **hidden alias** — `isHidden: true` so it does not pollute the field
-   list or the Data Agent's surface, but it still resolves for existing reports.
-3. Migrate consumers, then drop the alias.
+So the push is a **union, not a replacement**. `carry_over_measures_reports_use()` reads the live
+model back, finds the measures this generator does not define, and for each one still referenced
+by a report in the workspace, copies its DAX into the definition as `isHidden: true` before
+pushing. Nobody has to know what the other generator defines.
 
-`check_breaking_removals()` in `deploy_semantic_model.py` now enforces this: before pushing, it
-reads the deployed measure list, diffs it against the new definition, scans every Report in the
-workspace for references to anything removed, and **refuses to deploy** if a consumer would
-break. Unused removals are printed, not blocked.
+- Measures **nobody uses** are still dropped — otherwise the model only ever grows.
+- If the expression cannot be recovered (multi-line TMDL, or its table is gone), the deploy
+  **refuses** rather than pushing an empty measure.
+- If the read-back API is down, the carry-over is skipped with a warning, never a failed deploy.
+
+Renaming stays a two-step move on top of that: add the new name, keep the old one as a hidden
+alias, migrate consumers, then drop the alias. That is why `[Line Revenue]` still resolves to
+`[Product Revenue]`.
 
 ---
 
@@ -427,7 +432,7 @@ by name, and only creates when neither exists. Re-running resumes; it never dupl
 | No two routes between the same tables | semantic model import fails outright |
 | Respect single-direction filter flow | every bar shows the same total, silently |
 | `COUNTROWS(FILTER(...))` → BLANK | KPI cards show blank instead of 0 |
-| **Renaming a measure is a breaking change** | live reports fail at render, no warning; keep a hidden alias |
+| **Renaming a measure is a breaking change** | live reports fail at render, no warning; the deploy is a union so the other generator's measures survive |
 | **Validate columns, not just measures** | `ROW("v",[M])` misses broken column refs entirely |
 | **Power BI clips text, never shrinks it** | `line_px = pt * 1.8` **plus** a constant pad (8px textbox, 32px card), both derived not measured; a single multiplier is wrong |
 | **A card stacks 3 texts** (title + callout + label) | sizing on the callout alone clips the label; fix the font, not the box |
@@ -456,7 +461,7 @@ before **any** deploy script.
 | **Report definition** | pages non-empty, every data visual has a `prototypeQuery`, every referenced table/column/measure exists in the model, projections match the query, groupings respect filter direction, theme name consistent, storyline named on the page |
 | **Layout** | no clipped text, no overlapping visuals, nothing off-page, header band tall enough for its own text, cards clear of the header — plus a test that the rule *rejects* the geometry that originally shipped |
 | **Model contract** | deprecated measure aliases still present and hidden, no duplicate measure names |
-| **Breaking-change guard** | `check_breaking_removals()` raises on a removal a report still uses and names the consumer, allows removing an unused measure, treats a rename-with-alias as *not* a removal, and never fails the deploy on an API outage — mutation-tested (neutralising the guard turns the first red) |
+| **Shared-model union** | `carry_over_measures_reports_use()` carries over a live measure a report still uses (DAX verbatim, hidden), still drops unused ones, adds nothing it already defines, refuses when the expression cannot be recovered, and never fails the deploy on an API outage — mutation-tested (neutralising it turns two red) |
 | **Item ownership** | this generator refuses to publish to a report item reserved for another generator, and renames so the next run cannot find it back by name |
 
 The report tests build the report and the model **in memory** and cross-check them against each
@@ -465,5 +470,5 @@ that cannot carry the filter, fails the build — before anything reaches Fabric
 
 Two further checks run **against the live tenant** at deploy time, because they cannot be done
 offline: `validate_fields()` executes every measure *and column* reference through
-`executeQueries`, and `check_breaking_removals()` refuses to publish a model that would break a
-deployed report. The latter's *logic* is covered offline with stubs; only its API calls are not.
+`executeQueries`, and `carry_over_measures_reports_use()` reads the live model back so the push
+becomes a union. The latter's *logic* is covered offline with stubs; only its API calls are not.

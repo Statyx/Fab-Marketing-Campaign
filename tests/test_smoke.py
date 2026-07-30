@@ -10,6 +10,7 @@ churn question unanswerable. These tests exist so that can never ship again.
 Run BEFORE any deploy:  python -m pytest tests/ -v --tb=short
 """
 import ast
+import base64
 import json
 import pathlib
 import sys
@@ -835,7 +836,7 @@ def test_fork_name_does_not_grow_a_second_suffix(dr, reserved):
     assert name == forked, f"suffix applied twice: {name}"
 
 
-# -- Breaking-change guard ---------------------------------------------------
+# -- Shared model: union, not replace -----------------------------------------
 
 @pytest.fixture(scope="module")
 def dsm():
@@ -848,55 +849,100 @@ def _bim(*names):
                                   "measures": [{"name": n} for n in names]}]}}
 
 
+def _measures(bim):
+    return {m["name"]: m for t in bim["model"]["tables"] for m in t.get("measures", [])}
+
+
 def _stub(dsm, monkeypatch, live, used):
-    monkeypatch.setattr(dsm, "deployed_measure_names",
-                        lambda *a, **k: {("t", n) for n in live})
+    monkeypatch.setattr(dsm, "deployed_measures",
+                        lambda *a, **k: {("t", n): dax for n, dax in live.items()})
     monkeypatch.setattr(dsm, "measures_used_by_reports", lambda *a, **k: used)
 
 
-def test_guard_refuses_to_delete_a_measure_a_report_uses(dsm, monkeypatch):
-    """The averted incident, replayed at the gate.
+def test_a_measure_this_generator_never_heard_of_survives(dsm, monkeypatch):
+    """The whole point: deploying must not erase the other generator's work.
 
-    The main-checkout model still defined [Line Revenue] and did not know about
-    [Product Revenue]. Deploying it would have dropped a measure the live report
-    binds to; Fabric would have returned 200 and the report would have rendered
-    "Something's wrong with one or more fields" at the demo. Nothing was
-    actually deleted -- it was caught by hand. This makes the catch mechanical.
+    Two generators share one semantic model. The main checkout's model defines
+    [Line Revenue] and has never heard of [Product Revenue]; this branch's does
+    the opposite. Replacing the model wholesale means whoever deploys last wins
+    and the other one's report renders "Something's wrong with one or more
+    fields". So the deploy is a union: what is live and still used stays live.
+    """
+    bim = _bim("Line Revenue")
+    _stub(dsm, monkeypatch,
+          live={"Product Revenue": "SUM(order_lines[line_total_eur])",
+                "Line Revenue": "[Product Revenue]"},
+          used={"Product Revenue": {"RPT_Marketing_Churn"}})
+
+    carried = dsm.carry_over_measures_reports_use("tok", "ws", "sm", bim)
+
+    assert carried == ["Product Revenue"]
+    kept = _measures(bim)["Product Revenue"]
+    assert kept["expression"] == "SUM(order_lines[line_total_eur])", "DAX must survive verbatim"
+    assert kept["isHidden"], "carried-over measures stay out of the field list"
+    assert "RPT_Marketing_Churn" in kept["description"], "say who it was kept for"
+
+
+def test_unused_measures_are_still_dropped(dsm, monkeypatch):
+    """Union must not mean the model only ever grows: dead measures still go."""
+    bim = _bim("Product Revenue")
+    _stub(dsm, monkeypatch,
+          live={"Product Revenue": "SUM(x)", "Scratch": "1"},
+          used={"Product Revenue": {"RPT_Marketing_Churn"}})
+
+    assert dsm.carry_over_measures_reports_use("tok", "ws", "sm", bim) == []
+    assert "Scratch" not in _measures(bim)
+
+
+def test_a_measure_the_generator_defines_is_not_carried_over(dsm, monkeypatch):
+    """No duplicate: the generator's own definition always wins over the live one."""
+    bim = _bim("Product Revenue", "Line Revenue")
+    called = []
+    monkeypatch.setattr(dsm, "deployed_measures",
+                        lambda *a, **k: {("t", "Product Revenue"): "SUM(x)",
+                                         ("t", "Line Revenue"): "[Product Revenue]"})
+    monkeypatch.setattr(dsm, "measures_used_by_reports",
+                        lambda *a, **k: called.append(1) or {})
+
+    assert dsm.carry_over_measures_reports_use("tok", "ws", "sm", bim) == []
+    assert len(_measures(bim)) == 2, "nothing added"
+    assert not called, "nothing was missing, so the guard must not scan every report"
+
+
+def test_refuses_when_the_expression_cannot_be_carried(dsm, monkeypatch):
+    """Silently dropping a used measure is the failure mode. Refuse loudly instead.
+
+    TMDL read-back returns an empty expression for a multi-line measure. Keeping
+    it as an empty measure would be worse than not deploying.
     """
     _stub(dsm, monkeypatch,
-          live={"Product Revenue", "Line Revenue"},
-          used={"Product Revenue": {"RPT_Marketing_Churn"}})
+          live={"Multi Line": ""},
+          used={"Multi Line": {"RPT_Marketing_Churn"}})
     with pytest.raises(RuntimeError) as err:
-        dsm.check_breaking_removals("tok", "ws", "sm", _bim("Line Revenue"))
-    assert "Product Revenue" in str(err.value)
+        dsm.carry_over_measures_reports_use("tok", "ws", "sm", _bim("Other"))
+    assert "Multi Line" in str(err.value)
     assert "RPT_Marketing_Churn" in str(err.value), "the error must name the consumer to fix"
 
 
-def test_guard_allows_dropping_a_measure_nobody_uses(dsm, monkeypatch):
-    """A guard that blocks every removal gets switched off. It must only block real breakage."""
-    _stub(dsm, monkeypatch, live={"Product Revenue", "Scratch"},
-          used={"Product Revenue": {"RPT_Marketing_Churn"}})
-    dsm.check_breaking_removals("tok", "ws", "sm", _bim("Product Revenue"))
-
-
-def test_renaming_with_a_hidden_alias_is_not_a_removal(dsm, monkeypatch):
-    """Why [Line Revenue] survives: keeping the old name as an alias empties `removed`.
-
-    This is the remediation the guard exists to make possible -- rename freely,
-    provided the old name stays as a hidden alias until consumers migrate.
-    """
-    called = []
-    _stub(dsm, monkeypatch, live={"Product Revenue", "Line Revenue"}, used={})
-    monkeypatch.setattr(dsm, "measures_used_by_reports",
-                        lambda *a, **k: called.append(1) or {})
-    dsm.check_breaking_removals("tok", "ws", "sm",
-                                _bim("Product Revenue", "Line Revenue"))
-    assert not called, "nothing was removed, so the guard must not scan every report"
-
-
-def test_guard_does_not_block_the_deploy_when_the_api_is_unavailable(dsm, monkeypatch):
+def test_does_not_block_the_deploy_when_the_api_is_unavailable(dsm, monkeypatch):
     """A guard that fails the deploy on an unrelated API hiccup is a guard people delete."""
     def boom(*a, **k):
         raise RuntimeError("503 Service Unavailable")
-    monkeypatch.setattr(dsm, "deployed_measure_names", boom)
-    dsm.check_breaking_removals("tok", "ws", "sm", _bim("Product Revenue"))
+    monkeypatch.setattr(dsm, "deployed_measures", boom)
+    assert dsm.carry_over_measures_reports_use("tok", "ws", "sm", _bim("Product Revenue")) == []
+
+
+def test_readback_parses_the_dax_not_just_the_name(dsm, monkeypatch):
+    """The carry-over is only as good as the expression it recovers from TMDL."""
+    tmdl = ("table t\n"
+            "\tmeasure 'Product Revenue' = SUM(order_lines[line_total_eur])\n"
+            "\t\tformatString: #,0\n"
+            "\tmeasure Buyers = DISTINCTCOUNT(orders[customer_id])\n")
+    monkeypatch.setattr(dsm, "get_definition_parts", lambda *a, **k: [
+        {"path": "definition/tables/t.tmdl",
+         "payload": base64.b64encode(tmdl.encode("utf-8")).decode()}])
+
+    live = dsm.deployed_measures("tok", "ws", "sm")
+    assert live[("t", "Product Revenue")] == "SUM(order_lines[line_total_eur])"
+    assert live[("t", "Buyers")] == "DISTINCTCOUNT(orders[customer_id])"
+

@@ -419,19 +419,10 @@ def build_model_bim(config, state):
             _measure("Product Revenue", "SUM(order_lines[line_total_eur])",
                      "Revenue summed from order lines — sliceable by product category",
                      fmt="#,0", folder="Commerce"),
-            # DEPRECATED alias of [Product Revenue]. This measure was renamed and
-            # simply dropped, which broke a live report that was bound to it —
-            # a semantic model is a contract, and removing a measure is a
-            # breaking change for every downstream consumer. Kept hidden so it
-            # still resolves for existing reports without offering a duplicate
-            # to Copilot, the Data Agent or report authors. Remove only once no
-            # report references it (deploy checks this and will refuse).
-            #
-            # MERGE NOTE (origin/main cbdbb5f): main redefined [Line Revenue] as a
-            # real SUM and did not define [Product Revenue] at all. Taking that
-            # side would delete [Product Revenue] from the live model and break
-            # the very report main owns, which now binds to it. This side keeps
-            # both names resolving, so neither generator's report can break.
+            # Both names must resolve: this generator's report binds to
+            # [Product Revenue], the other one's binds to [Line Revenue]. Kept
+            # hidden so it does not show up twice for Copilot, the Data Agent or
+            # report authors. Safe to delete once no report references it.
             _measure("Line Revenue", "[Product Revenue]",
                      "Deprecated — use [Product Revenue].",
                      fmt="#,0", folder="Commerce", hidden=True),
@@ -616,21 +607,28 @@ def get_definition_parts(token, ws_id, item_kind, item_id):
     return resp.json().get("definition", {}).get("parts", [])
 
 
-def deployed_measure_names(token, ws_id, sm_id):
-    """Read the model back from Fabric and return its {(table, measure)} inventory.
+def deployed_measures(token, ws_id, sm_id):
+    """Read the model back from Fabric and return {(table, measure): dax}.
 
     Fabric stores the model as TMDL even when it is pushed as a .bim, so the
-    read-back is parsed from the TMDL parts rather than compared as JSON.
+    read-back is parsed from the TMDL parts rather than compared as JSON. A
+    measure whose expression spans several lines comes back with an empty
+    string: the caller must treat that as "not recoverable", never as "empty".
     """
-    found = set()
+    found = {}
     for part in get_definition_parts(token, ws_id, "semanticModels", sm_id):
         if "/tables/" not in part["path"]:
             continue
         table = part["path"].split("/")[-1].removesuffix(".tmdl")
         tmdl = base64.b64decode(part["payload"]).decode("utf-8")
-        for name in re.findall(r"^\s*measure\s+(.+?)\s*=", tmdl, re.M):
-            found.add((table, name.strip().strip("'\"")))
+        for name, expr in re.findall(r"^\s*measure\s+(.+?)\s*=[ \t]*(.*)$", tmdl, re.M):
+            found[(table, name.strip().strip("'\""))] = expr.strip()
     return found
+
+
+def deployed_measure_names(token, ws_id, sm_id):
+    """The {(table, measure)} inventory currently live in the model."""
+    return set(deployed_measures(token, ws_id, sm_id))
 
 
 def measures_used_by_reports(token, ws_id):
@@ -666,27 +664,63 @@ def measures_used_by_reports(token, ws_id):
     return used
 
 
-def check_breaking_removals(token, ws_id, sm_id, model_bim):
-    """Refuse to delete a measure that a report still uses."""
+def carry_over_measures_reports_use(token, ws_id, sm_id, model_bim):
+    """Union, not replace. Adds back live measures this generator doesn't define.
+
+    Two generators share one semantic model. Whoever deployed last erased what
+    the other had added, so the only options were "I crush you" or "I block
+    you". Neither is a fix. Carrying the survivors over makes the deploy a
+    union: a measure that is live and still used by a report stays live, even
+    when the generator pushing today has never heard of it.
+
+    Measures nobody uses are still dropped -- otherwise the model only ever
+    grows and dead measures pile up forever.
+
+    Mutates `model_bim` and returns the names carried over.
+    """
     try:
-        current = {name for _, name in deployed_measure_names(token, ws_id, sm_id)}
+        live = deployed_measures(token, ws_id, sm_id)
     except Exception as exc:
-        print(f"   WARNING: could not read current model ({exc}); skipping removal check")
-        return
-    new = {m["name"] for t in model_bim["model"]["tables"] for m in t.get("measures", [])}
-    removed = current - new
-    if not removed:
-        return
+        print(f"   WARNING: could not read current model ({exc}); skipping carry-over")
+        return []
+
+    defined = {m["name"] for t in model_bim["model"]["tables"] for m in t.get("measures", [])}
+    missing = {k: v for k, v in live.items() if k[1] not in defined}
+    if not missing:
+        return []
 
     used = measures_used_by_reports(token, ws_id)
-    breaking = {m: sorted(used[m]) for m in removed if m in used}
-    if breaking:
-        detail = "; ".join(f"[{m}] used by {', '.join(r)}" for m, r in breaking.items())
+    tables = {t["name"]: t for t in model_bim["model"]["tables"]}
+    carried, unrecoverable = [], []
+
+    for (table, name), dax in sorted(missing.items()):
+        if name not in used:
+            continue
+        if not dax or table not in tables:
+            unrecoverable.append(f"[{name}] used by {', '.join(sorted(used[name]))}")
+            continue
+        tables[table].setdefault("measures", []).append({
+            "name": name,
+            "expression": dax,
+            "isHidden": True,
+            "description": "Carried over from the live model: defined by another "
+                           f"generator and still used by {', '.join(sorted(used[name]))}.",
+        })
+        carried.append(name)
+
+    if unrecoverable:
         raise RuntimeError(
-            "Refusing to deploy: this would delete measures that reports still "
-            f"reference, breaking them silently. {detail}. "
-            "Keep them as hidden deprecated aliases, or migrate the reports first.")
-    print(f"   removing {len(removed)} unused measure(s): {', '.join(sorted(removed))}")
+            "Refusing to deploy: these live measures are still used by a report "
+            "and could not be carried over (multi-line expression, or their table "
+            f"no longer exists). {'; '.join(unrecoverable)}. "
+            "Define them in this generator, or migrate the reports first.")
+
+    dropped = sorted(n for _, n in missing if n not in used)
+    if carried:
+        print(f"   carried over {len(carried)} measure(s) still in use: {', '.join(carried)}")
+    if dropped:
+        print(f"   dropping {len(dropped)} unused measure(s): {', '.join(dropped)}")
+    return carried
 
 
 def verify_deployment(token, ws_id, sm_id, model_bim, repush=None):
@@ -770,15 +804,17 @@ def main():
     rcount = len(model_bim["model"]["relationships"])
     print(f"   {tcount} tables, {mcount} measures, {rcount} relationships")
 
+    sm_id = state.get("semantic_model_id")
+    if sm_id:
+        # Before serialising: this may add measures back into model_bim.
+        carry_over_measures_reports_use(token, ws_id, sm_id, model_bim)
+        mcount = sum(len(t.get("measures", [])) for t in model_bim["model"]["tables"])
+
     definition = {"parts": [
         {"path": "definition.pbism", "payload": b64encode_json({"version": "1.0"}),
          "payloadType": "InlineBase64"},
         {"path": "model.bim", "payload": b64encode_json(model_bim), "payloadType": "InlineBase64"},
     ]}
-
-    sm_id = state.get("semantic_model_id")
-    if sm_id:
-        check_breaking_removals(token, ws_id, sm_id, model_bim)
 
     def push(target_id):
         return requests.post(

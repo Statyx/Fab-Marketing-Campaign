@@ -64,10 +64,12 @@ One command: `python deploy_all.py` (idempotent, tenant-guarded).
 - **Semantic model**: avoid ambiguous relationship paths (two routes between the same two tables) —
   the model import fails outright.
 - **`COUNTROWS(FILTER(...))` returns BLANK, not 0** → wrap in `COALESCE(..., 0)`.
-- **Renaming/deleting a measure is a BREAKING CHANGE.** Fabric deploys it green; the consuming
-  report fails only at render with "Something's wrong with one or more fields". Keep the old name
-  as a hidden alias (`isHidden: true`) until consumers migrate. `check_breaking_removals()` in
-  `deploy_semantic_model.py` blocks the deploy if a removed measure is still referenced.
+- **One shared semantic model, several generators → the push must be a UNION.** Each script
+  defines the model in full, so pushing it replaces everything and whoever deploys last erases the
+  other's measures — the report then fails only at render with "Something's wrong with one or more
+  fields". `carry_over_measures_reports_use()` in `deploy_semantic_model.py` reads the live model
+  back and copies over any measure it doesn't define that a report still uses (hidden, DAX
+  verbatim). Unused ones are still dropped. Renaming stays: new name + old name as `isHidden` alias.
 - **Validate columns, not just measures.** `EVALUATE ROW("v",[M])` tests measures;
   `EVALUATE TOPN(1, VALUES('t'[c]))` tests columns. A broken column kills a visual just as hard.
 - **Power BI clips text — it never shrinks the font and never warns.** Two terms, kept separate:
