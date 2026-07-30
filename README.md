@@ -164,25 +164,67 @@ docs/ARCHITECTURE.md          — full design
 
 ## Status
 
+Everything below was deployed **and read back from the tenant** on workspace
+`CDR - Marketing Campaign`. Nothing here is claimed from a script's exit code alone.
+
 | Layer | Code | Deployed |
 |---|---|---|
 | Config-driven generator with real churn | ✅ | n/a |
 | Test gate (54 tests, fully offline) | ✅ | n/a |
-| Workspace + Lakehouse (15 CSV + 1 520 text files) | ✅ | ⏳ re-run needed |
-| Delta tables + curated churn views (Spark notebook) | ✅ | ⏳ re-run needed |
-| Semantic model (Direct Lake, 12 tables / 49 measures) | ✅ | ⏳ re-run needed |
-| Ontology + Graph (Customer 360) | ✅ | ⏳ not yet |
-| Power BI report (4 pages / 46 visuals) | ✅ | ⏳ not yet |
-| Dual-source Data Agent | ✅ | ⏳ not yet |
+| Workspace + Lakehouse (15 CSV + 420 text files) | ✅ | ✅ `LH_Customer360` |
+| Delta tables + curated churn views (Spark notebook) | ✅ | ✅ `NB_Setup_Customer360` |
+| Semantic model (Direct Lake, 12 tables / 49 measures) | ✅ | ✅ `SM_Marketing_Analytics` |
+| Ontology + Graph (Customer 360) | ✅ | ✅ `ONT_Customer360` |
+| Power BI report (4 pages / 46 visuals) | ✅ | ✅ `RPT_Marketing_Churn` |
+| Dual-source Data Agent | ✅ | ✅ `Marketing_Churn_Agent` |
 
-> The dataset was regenerated (`fatigue_share` is now explicit in the config), so any previously
-> deployed items are stale. Re-run `deploy_all.py` before a demo. Nothing in this repo claims a
-> deployment that has not been re-proven since.
+How each ✅ was proven:
 
-Headline numbers on the shipped dataset: **12 000 customers** · 10 513 buyers · **37 466 orders** ·
-**5.08 M€** revenue · AOV **135.68 €** · **825 customers at risk** (Critical 25 + High 800) ·
-**235 k€** of past spend in the at-risk cohort · all five risk bands populated ·
-lifecycle coherent (`at_risk` 71.5 > `churned` 64.3 > `active` 25.0, prospects unscored).
+- **Semantic model** — the definition is read back after every push and compared measure by
+  measure against what was sent (49/49 match). See *Two deployment traps* below.
+- **Report** — all 27 measures and 10 columns referenced by its 46 visuals were resolved
+  against the live model via `executeQueries`; zero broken bindings.
+- **Data Agent** — a readback confirms both datasources were accepted:
+  `ontology` → `ONT_Customer360`, `semantic_model` → `SM_Marketing_Analytics`.
+
+Live figures returned by the deployed model (not from the local CSVs):
+
+| Measure | Value |
+|---|---|
+| Total Customers | 12 000 |
+| Buyers | 10 513 |
+| Total Orders | 37 466 |
+| Revenue | 5 083 349.74 € |
+| Product Revenue | 5 083 349.74 € *(cross-check: order lines roll up to orders)* |
+| Average Order Value | 135.68 € |
+| Customers at Risk | 825 (7.85 % of buyers) |
+| Avg Churn Score | 29.51 |
+| Revenue at Risk | 235 196.07 € |
+| CLV at Risk | 154 865.60 € |
+| Total Sends | 72 799 |
+| Total Events | 17 557 |
+| Unsubscribed Customers | 499 |
+
+Risk bands are all populated and the lifecycle ordering is coherent
+(`at_risk` 71.5 > `churned` 64.3 > `active` 25.0, prospects unscored).
+
+### Two deployment traps this repo now guards against
+
+Both were hit for real on this tenant and both were **silent** — every script printed OK.
+
+1. **`updateDefinition` can succeed and change nothing.** The call returns `202`, the operation
+   polls to `Succeeded`, and the previous definition stays in place. The model sat one revision
+   behind, so two report visuals were bound to measures that did not exist.
+   `deploy_semantic_model.py` now reads the definition back, diffs the measure inventory, and
+   re-pushes (up to 3×) before failing loudly.
+
+2. **Direct Lake does not reframe on its own.** The setup notebook rewrites the Delta tables but
+   the model keeps serving the previous snapshot, so the report and the Data Agent answer with
+   stale numbers. `deploy_semantic_model.py` now forces a full refresh and waits for it.
+
+A third, unrelated race: after deleting a notebook Fabric frees the *display name* later than it
+removes the item from the listing, so recreating it returns `409 ItemDisplayNameNotAvailableYet`.
+`notebook_utils.create_notebook()` retries on it.
 
 ### Curated views (created by the setup notebook)
 

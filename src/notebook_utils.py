@@ -170,6 +170,22 @@ def create_notebook(workspace_id: str, display_name: str,
         headers=headers, json=body, timeout=60,
     )
 
+    # Fabric releases a deleted item's *name* later than it removes the item from
+    # the workspace listing, so a delete-then-create round trip can land here even
+    # though delete_notebook already waited for the item to disappear. Polling the
+    # list cannot detect this — the API tells us to retry, so retry.
+    for attempt in range(12):
+        if resp.status_code != 409 or "ItemDisplayNameNotAvailableYet" not in resp.text:
+            break
+        print(f"  Name '{display_name}' not released yet — retrying "
+              f"({attempt + 1}/12)...")
+        sys.stdout.flush()
+        time.sleep(15)
+        resp = requests.post(
+            f"{API}/workspaces/{workspace_id}/items",
+            headers=headers, json=body, timeout=60,
+        )
+
     if resp.status_code in (200, 201):
         return resp.json()["id"]
     elif resp.status_code == 202:

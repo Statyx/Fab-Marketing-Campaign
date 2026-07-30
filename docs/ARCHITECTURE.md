@@ -82,7 +82,11 @@ flowchart LR
 | **CRM** | `crm_accounts`, `crm_customers`, `crm_segments`, `crm_customer_segments`, `crm_interactions`, `crm_customer_profile` |
 | **Marketing** | `marketing_campaigns`, `marketing_assets`, `marketing_audiences`, `marketing_sends`, `marketing_events` |
 | **Commerce** | `products`, `orders`, `order_lines`, `returns` |
-| **Text corpus** | `customer_knowledge_notes/*.txt` (1 500), `email_bodies/*.txt` (20) |
+| **Text corpus** | `customer_knowledge_notes/*.txt` (1 500 generated, **400 uploaded**), `email_bodies/*.txt` (20) |
+
+The note cap is deliberate: `deploy_lakehouse.upload_text_corpus(..., limit_notes=400)` uploads
+420 files in total. Uploading all 1 500 costs minutes of one-file-at-a-time API calls and adds
+nothing to the demo — the RAG story is already told by 400 notes.
 
 `crm_customer_profile` is the analytical spine. Every column in it is **computed** from the
 transactional tables: `churn_risk_score`, `risk_band`, `clv_eur`, `days_since_last_order`,
@@ -161,6 +165,27 @@ Direct Lake over the lakehouse SQL endpoint. 12 tables (the three pure-lineage t
 `crm_accounts`, `marketing_assets`, `marketing_audiences` — stay in the lakehouse and the
 ontology, out of the star schema), 11 relationships, 49 measures, `fr-FR` culture,
 `discourageImplicitMeasures = true`, plus a linguistic schema and verified answers for Copilot.
+
+### Deploying it: never trust the 202
+
+`updateDefinition` returns `202` and the operation polls to `Succeeded` **even when Fabric keeps
+the previous definition**. This happened on this tenant: the model stayed one revision behind,
+still exposing an obsolete `Line Revenue` and missing `Total Events` / `Product Revenue`, while
+the deploy script printed OK. The report was then built against measures that did not exist.
+
+`deploy_semantic_model.py` therefore does two extra things after the push:
+
+1. `verify_deployment()` reads the definition back via `getDefinition` (Fabric returns **TMDL**,
+   not the `model.bim` that was submitted — parse `^\s*measure\s+(.+?)\s*=`), diffs the
+   `(table, measure)` inventory against what was sent, re-pushes on mismatch, and raises after
+   three attempts. A silent partial apply is now a hard failure.
+2. `reframe_direct_lake()` forces a full dataset refresh. **Direct Lake does not reframe by
+   itself** when the setup notebook rewrites the Delta files, so without this the model — and
+   everything downstream — keeps answering from the previous snapshot.
+
+Note that these need *two different tokens*: the Fabric API uses
+`helpers.get_fabric_token()` (`api.fabric.microsoft.com`), while dataset refresh and
+`executeQueries` need `helpers.get_powerbi_token()` (`analysis.windows.net/powerbi/api`).
 
 ### Relationship design — the two traps
 

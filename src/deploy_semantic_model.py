@@ -38,13 +38,16 @@ if hasattr(sys.stdout, "reconfigure"):
 
 import json
 import uuid
+import base64
+import re
+import time
 from pathlib import Path
 
 import requests
 
 sys.path.insert(0, str(Path(__file__).parent))
 from helpers import (load_config, load_state, save_state, get_fabric_token, fabric_headers,
-                     b64encode_json, poll_operation, find_item, print_step)
+                     get_powerbi_token, b64encode_json, poll_operation, find_item, print_step)
 
 API_BASE = None
 
@@ -577,6 +580,97 @@ def build_model_bim(config, state):
     }
 
 
+def deployed_measure_names(token, ws_id, sm_id):
+    """Read the model back from Fabric and return its {(table, measure)} inventory.
+
+    Fabric stores the model as TMDL even when it is pushed as a .bim, so the
+    read-back is parsed from the TMDL parts rather than compared as JSON.
+    """
+    headers = fabric_headers(token)
+    resp = requests.post(
+        f"{API_BASE}/workspaces/{ws_id}/semanticModels/{sm_id}/getDefinition",
+        headers=headers, timeout=180)
+    if resp.status_code == 202:
+        op_id = resp.headers.get("x-ms-operation-id", "")
+        poll_operation(token, API_BASE, op_id)
+        resp = requests.get(f"{API_BASE}/operations/{op_id}/result",
+                            headers=headers, timeout=180)
+    if resp.status_code != 200:
+        raise RuntimeError(f"getDefinition failed ({resp.status_code}): {resp.text[:300]}")
+
+    found = set()
+    for part in resp.json().get("definition", {}).get("parts", []):
+        if "/tables/" not in part["path"]:
+            continue
+        table = part["path"].split("/")[-1].removesuffix(".tmdl")
+        tmdl = base64.b64decode(part["payload"]).decode("utf-8")
+        for name in re.findall(r"^\s*measure\s+(.+?)\s*=", tmdl, re.M):
+            found.add((table, name.strip().strip("'\"")))
+    return found
+
+
+def verify_deployment(token, ws_id, sm_id, model_bim, repush=None):
+    """Fail loudly if Fabric did not store what we sent.
+
+    updateDefinition can return 202, poll to 'Succeeded', and still leave the
+    previous definition in place. That produced a model that was silently one
+    revision behind: the script printed OK, and the report then bound to
+    measures that did not exist. Trust the read-back, not the poll.
+    """
+    expected = {(t["name"], m["name"])
+                for t in model_bim["model"]["tables"]
+                for m in t.get("measures", [])}
+    for attempt in range(1, 4):
+        actual = deployed_measure_names(token, ws_id, sm_id)
+        missing, extra = expected - actual, actual - expected
+        if not missing and not extra:
+            print(f"   verified: {len(actual)} measures match the definition")
+            return
+        print(f"   read-back mismatch (attempt {attempt}/3): "
+              f"{len(missing)} missing, {len(extra)} stale")
+        if attempt == 3:
+            raise RuntimeError(
+                "Semantic model did not apply after 3 attempts. "
+                f"Missing: {sorted(missing)} | Stale: {sorted(extra)}")
+        if repush:
+            print("   re-pushing definition...")
+            repush()
+        time.sleep(15)
+
+
+def reframe_direct_lake(ws_id, sm_id):
+    """Force Direct Lake to pick up the current Delta files.
+
+    Direct Lake does NOT reframe on its own when the setup notebook rewrites the
+    Delta tables. Without this the model keeps serving the previous snapshot, so
+    the report and the Data Agent answer with stale numbers while every
+    deployment step reports success.
+    """
+    token = get_powerbi_token()
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    base = f"https://api.powerbi.com/v1.0/myorg/groups/{ws_id}/datasets/{sm_id}"
+    resp = requests.post(f"{base}/refreshes", headers=headers,
+                         json={"type": "full"}, timeout=120)
+    if resp.status_code not in (200, 202):
+        print(f"   WARNING: reframe could not be queued ({resp.status_code}): {resp.text[:200]}")
+        return
+    print("   reframing Direct Lake...")
+    for _ in range(60):
+        time.sleep(5)
+        hist = requests.get(f"{base}/refreshes?$top=1", headers=headers, timeout=60).json()
+        entries = hist.get("value") or []
+        if not entries:
+            continue
+        status = entries[0].get("status")
+        if status == "Completed":
+            print("   reframe completed")
+            return
+        if status in ("Failed", "Disabled"):
+            raise RuntimeError(f"Direct Lake reframe {status}: "
+                               f"{entries[0].get('serviceExceptionJson', '')[:300]}")
+    print("   WARNING: reframe still running after 5 min — check the workspace")
+
+
 def main():
     config = load_config(); state = load_state()
     global API_BASE
@@ -603,16 +697,19 @@ def main():
     ]}
 
     sm_id = state.get("semantic_model_id")
+    def push(target_id):
+        return requests.post(
+            f"{API_BASE}/workspaces/{ws_id}/semanticModels/{target_id}/updateDefinition",
+            headers=headers, json={"definition": definition})
+
     if sm_id:
         print(f"   updating existing model {sm_id}")
-        resp = requests.post(f"{API_BASE}/workspaces/{ws_id}/semanticModels/{sm_id}/updateDefinition",
-                             headers=headers, json={"definition": definition})
+        resp = push(sm_id)
     else:
         try:
             sm_id = find_item(token, API_BASE, ws_id, sm_name, "SemanticModel")["id"]
             print(f"   updating found model {sm_id}")
-            resp = requests.post(f"{API_BASE}/workspaces/{ws_id}/semanticModels/{sm_id}/updateDefinition",
-                                 headers=headers, json={"definition": definition})
+            resp = push(sm_id)
         except RuntimeError:
             print("   creating new model...")
             resp = requests.post(f"{API_BASE}/workspaces/{ws_id}/items", headers=headers,
@@ -631,6 +728,9 @@ def main():
             sm_id = find_item(token, API_BASE, ws_id, sm_name, "SemanticModel")["id"]
     else:
         raise RuntimeError(f"Deploy failed ({resp.status_code}): {resp.text[:400]}")
+
+    verify_deployment(token, ws_id, sm_id, model_bim, repush=lambda: push(sm_id))
+    reframe_direct_lake(ws_id, sm_id)
 
     state["semantic_model_id"] = sm_id
     save_state(state)

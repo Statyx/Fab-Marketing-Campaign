@@ -51,6 +51,21 @@ def get_fabric_token() -> str:
     return result.decode().strip()
 
 
+def get_powerbi_token() -> str:
+    """Get a Power BI API token (dataset refresh, executeQueries).
+
+    The Fabric token does not work against api.powerbi.com — the refresh and
+    DAX endpoints need the analysis.windows.net audience.
+    """
+    result = subprocess.check_output(
+        ["az", "account", "get-access-token",
+         "--resource", "https://analysis.windows.net/powerbi/api",
+         "--query", "accessToken", "-o", "tsv"],
+        shell=True
+    )
+    return result.decode().strip()
+
+
 def get_kusto_token(query_service_uri: str) -> str:
     """Get Kusto token, trying multiple scopes."""
     scopes = [
