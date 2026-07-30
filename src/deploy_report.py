@@ -55,15 +55,43 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 import json
+import math
 from pathlib import Path
 
 import requests
 
 sys.path.insert(0, str(Path(__file__).parent))
 from helpers import (load_config, load_state, save_state, get_fabric_token, fabric_headers,
-                     b64encode_json, poll_operation, find_item, print_step)
+                     get_powerbi_token, b64encode_json, poll_operation, find_item, print_step)
 
 PAGE_W, PAGE_H = 1280, 720
+
+# ── Text metrics ────────────────────────────────────────────────────────────
+# A Power BI textbox clips its content when the box is shorter than the line box
+# (glyph em + leading + the control's own padding). It does not shrink the font
+# and it does not warn — the text is simply cut off, top and bottom.
+# 1pt = 4/3 px at 96 DPI; line-height ~1.35; padding ~8px. The factor below folds
+# those together with a small safety margin.
+# This existed because the header hard-coded h=30 for a 17pt title (needs 38) and
+# h=20 for a 10pt subtitle (needs 22), and the two boxes overlapped by 2px.
+# Heights are derived from the font size now — never hard-code them again.
+TEXT_H_PER_PT = 2.2
+
+
+def text_height(font_pt):
+    """Minimum textbox height that renders `font_pt` without clipping."""
+    return int(math.ceil(font_pt * TEXT_H_PER_PT))
+
+
+HEADER_TITLE_PT, HEADER_SUB_PT = 17, 10
+HEADER_PAD_TOP, HEADER_PAD_BOTTOM = 10, 6
+HEADER_TITLE_H = text_height(HEADER_TITLE_PT)          # 38
+HEADER_SUB_H = text_height(HEADER_SUB_PT)              # 22
+HEADER_H = HEADER_PAD_TOP + HEADER_TITLE_H + HEADER_SUB_H + HEADER_PAD_BOTTOM   # 76
+
+MARGIN = 28
+CARD_Y = HEADER_H + 10                                 # 86
+CARD_H = 104                                           # cards still end at y=190
 
 # Accessible palette — mirrors theme/Accessible_Fluent2_Theme.json.
 C_BLUE, C_RED, C_GOLD, C_TEAL = "#00008F", "#863C41", "#896610", "#027180"
@@ -301,10 +329,14 @@ def _band(name, x, y, w, h, color):
 
 
 def _header(prefix, accent, title, subtitle):
+    """Banner sized from the fonts it contains, so the text cannot be clipped."""
     return [
-        _band(f"{prefix}_band", 0, 0, PAGE_W, 64, accent),
-        _textbox(f"{prefix}_t", 28, 12, 900, 30, title, "17pt", "#FFFFFF"),
-        _textbox(f"{prefix}_s", 28, 40, 900, 20, subtitle, "10pt", "#F3F2F1"),
+        _band(f"{prefix}_band", 0, 0, PAGE_W, HEADER_H, accent),
+        _textbox(f"{prefix}_t", MARGIN, HEADER_PAD_TOP, PAGE_W - 2 * MARGIN,
+                 HEADER_TITLE_H, title, f"{HEADER_TITLE_PT}pt", "#FFFFFF"),
+        _textbox(f"{prefix}_s", MARGIN, HEADER_PAD_TOP + HEADER_TITLE_H,
+                 PAGE_W - 2 * MARGIN, HEADER_SUB_H, subtitle,
+                 f"{HEADER_SUB_PT}pt", "#F3F2F1"),
     ]
 
 
@@ -329,11 +361,11 @@ def build_report(state, config):
     # Page 1 — Détection : qui est à risque, et combien ça coûte.
     p1 = _header("d", C_BLUE, "Customer 360 — Détection du risque d'attrition",
                  f"Score de churn calculé à partir du comportement · cohorte actionnable ≥ {at_risk}") + [
-        _card("c1", 28, 78, 238, 112, "crm_customers", "Total Customers", NEUTRAL, "Base clients"),
-        _card("c2", 278, 78, 238, 112, "crm_customer_profile", "Customers at Risk", ALERT, "Clients à risque"),
-        _card("c3", 528, 78, 238, 112, "crm_customer_profile", "At Risk %", ALERT, "Part de la base"),
-        _card("c4", 778, 78, 238, 112, "crm_customer_profile", "Revenue at Risk", ALERT, "CA menacé"),
-        _card("c5", 1028, 78, 224, 112, "crm_customer_profile", "CLV at Risk", PREMIUM, "Valeur vie menacée"),
+        _card("c1", 28, CARD_Y, 238, CARD_H, "crm_customers", "Total Customers", NEUTRAL, "Base clients"),
+        _card("c2", 278, CARD_Y, 238, CARD_H, "crm_customer_profile", "Customers at Risk", ALERT, "Clients à risque"),
+        _card("c3", 528, CARD_Y, 238, CARD_H, "crm_customer_profile", "At Risk %", ALERT, "Part de la base"),
+        _card("c4", 778, CARD_Y, 238, CARD_H, "crm_customer_profile", "Revenue at Risk", ALERT, "CA menacé"),
+        _card("c5", 1028, CARD_Y, 224, CARD_H, "crm_customer_profile", "CLV at Risk", PREMIUM, "Valeur vie menacée"),
         _column("col1", 28, 202, 620, 248, "crm_customer_profile", "risk_band",
                 "crm_customer_profile", "Profiled Customers",
                 "Clients par bande de risque (Prospect = jamais commandé)"),
@@ -349,11 +381,11 @@ def build_report(state, config):
     # Page 2 — Diagnostic : la cause racine, une campagne qui sur-sollicite.
     p2 = _header("r", C_RED, "Cause racine — Pression marketing",
                  f"« {culprit} » sur-sollicite {victim} : envois × 4 → désabonnements → arrêt des commandes") + [
-        _card("c6", 28, 78, 238, 112, "marketing_sends", "Total Sends", NEUTRAL, "Emails envoyés"),
-        _card("c7", 278, 78, 238, 112, "marketing_sends", "Sends per Customer", ALERT, "Pression / client"),
-        _card("c8", 528, 78, 238, 112, "marketing_events", "Unsubscribes", ALERT, "Désabonnements"),
-        _card("c9", 778, 78, 238, 112, "marketing_events", "Unsubscribe Rate", ALERT, "Taux de désabo."),
-        _card("c10", 1028, 78, 224, 112, "marketing_events", "Open Rate", GOOD, "Taux d'ouverture"),
+        _card("c6", 28, CARD_Y, 238, CARD_H, "marketing_sends", "Total Sends", NEUTRAL, "Emails envoyés"),
+        _card("c7", 278, CARD_Y, 238, CARD_H, "marketing_sends", "Sends per Customer", ALERT, "Pression / client"),
+        _card("c8", 528, CARD_Y, 238, CARD_H, "marketing_events", "Unsubscribes", ALERT, "Désabonnements"),
+        _card("c9", 778, CARD_Y, 238, CARD_H, "marketing_events", "Unsubscribe Rate", ALERT, "Taux de désabo."),
+        _card("c10", 1028, CARD_Y, 224, CARD_H, "marketing_events", "Open Rate", GOOD, "Taux d'ouverture"),
         _bar("b2", 28, 202, 620, 248, "marketing_campaigns", "campaign_name",
              "marketing_sends", "Sends per Customer",
              f"Envois par client et par campagne — « {culprit} » décroche"),
@@ -370,11 +402,11 @@ def build_report(state, config):
     # Page 3 — Quantification : ce que l'attrition vaut.
     p3 = _header("q", C_GOLD, "Quantification — Ce que l'attrition coûte",
                  "CA, commandes, panier moyen et mix produit du portefeuille exposé") + [
-        _card("c11", 28, 78, 238, 112, "orders", "Revenue", NEUTRAL, "Chiffre d'affaires"),
-        _card("c12", 278, 78, 238, 112, "orders", "Total Orders", NEUTRAL, "Commandes"),
-        _card("c13", 528, 78, 238, 112, "orders", "Average Order Value", NEUTRAL, "Panier moyen"),
-        _card("c14", 778, 78, 238, 112, "crm_customer_profile", "Revenue at Risk", ALERT, "CA menacé"),
-        _card("c15", 1028, 78, 224, 112, "returns", "Return Rate", ALERT, "Taux de retour"),
+        _card("c11", 28, CARD_Y, 238, CARD_H, "orders", "Revenue", NEUTRAL, "Chiffre d'affaires"),
+        _card("c12", 278, CARD_Y, 238, CARD_H, "orders", "Total Orders", NEUTRAL, "Commandes"),
+        _card("c13", 528, CARD_Y, 238, CARD_H, "orders", "Average Order Value", NEUTRAL, "Panier moyen"),
+        _card("c14", 778, CARD_Y, 238, CARD_H, "crm_customer_profile", "Revenue at Risk", ALERT, "CA menacé"),
+        _card("c15", 1028, CARD_Y, 224, CARD_H, "returns", "Return Rate", ALERT, "Taux de retour"),
         _bar("b4", 28, 202, 620, 248, "crm_customers", "lifecycle_stage", "orders", "Revenue",
              "Chiffre d'affaires par étape de cycle de vie"),
         _bar("b5", 660, 202, 592, 248, "products", "category", "order_lines", "Product Revenue",
@@ -393,11 +425,11 @@ def build_report(state, config):
     # Page 4 — Agir : qui reste joignable, et sur qui travailler.
     p4 = _header("a", C_TEAL, "Plan d'action — Réengager sans re-brûler",
                  "Base joignable, friction support, segments à suspendre et clients à travailler") + [
-        _card("c16", 28, 78, 238, 112, "crm_customers", "Opted-in Customers", GOOD, "Encore joignables"),
-        _card("c17", 278, 78, 238, 112, "crm_customer_profile", "Unsubscribed Customers", ALERT, "Désabonnés"),
-        _card("c18", 528, 78, 238, 112, "crm_customer_profile", "Avg Engagement Rate", NEUTRAL, "Engagement moyen"),
-        _card("c19", 778, 78, 238, 112, "crm_customer_profile", "Avg NPS", NEUTRAL, "NPS moyen"),
-        _card("c20", 1028, 78, 224, 112, "crm_interactions", "Unresolved Negative", ALERT, "Litiges ouverts"),
+        _card("c16", 28, CARD_Y, 238, CARD_H, "crm_customers", "Opted-in Customers", GOOD, "Encore joignables"),
+        _card("c17", 278, CARD_Y, 238, CARD_H, "crm_customer_profile", "Unsubscribed Customers", ALERT, "Désabonnés"),
+        _card("c18", 528, CARD_Y, 238, CARD_H, "crm_customer_profile", "Avg Engagement Rate", NEUTRAL, "Engagement moyen"),
+        _card("c19", 778, CARD_Y, 238, CARD_H, "crm_customer_profile", "Avg NPS", NEUTRAL, "NPS moyen"),
+        _card("c20", 1028, CARD_Y, 224, CARD_H, "crm_interactions", "Unresolved Negative", ALERT, "Litiges ouverts"),
         _bar("b6", 28, 202, 620, 248, "crm_segments", "segment_name",
              "crm_customer_segments", "Segment Memberships",
              f"Effectif par segment — {victim} est la cible à suspendre"),
@@ -465,6 +497,110 @@ def build_report(state, config):
     return report, pbir, base_theme, theme
 
 
+def report_field_refs(report):
+    """Every (kind, table, field) the report binds to.
+
+    Legacy PBIX stores each visual's config as a JSON *string*, so a naive walk
+    over the dict finds nothing — the payload has to be parsed back first.
+    """
+    measures, columns = set(), set()
+    for sec in report["sections"]:
+        for v in sec["visualContainers"]:
+            sv = json.loads(v["config"]).get("singleVisual", {})
+            pq = sv.get("prototypeQuery")
+            if not pq:
+                continue
+            src = {f["Name"]: f["Entity"] for f in pq.get("From", [])}
+            for sel in pq.get("Select", []):
+                if "Measure" in sel:
+                    ref = sel["Measure"]
+                    measures.add(ref["Property"])
+                elif "Column" in sel:
+                    ref = sel["Column"]
+                    alias = ref["Expression"]["SourceRef"]["Source"]
+                    columns.add((src.get(alias, alias), ref["Property"]))
+                elif "Aggregation" in sel:
+                    expr = sel["Aggregation"]["Expression"]
+                    if "Column" in expr:
+                        alias = expr["Column"]["Expression"]["SourceRef"]["Source"]
+                        columns.add((src.get(alias, alias), expr["Column"]["Property"]))
+    return measures, columns
+
+
+def validate_layout(report):
+    """Offline geometry checks — returns a list of human-readable problems.
+
+    Catches the two failure modes that ship silently: text clipped because its
+    box is shorter than the font needs, and visuals that overlap or fall off the
+    page. Power BI renders all of these without any warning.
+    """
+    problems = []
+    for sec in report["sections"]:
+        page = sec["displayName"]
+        boxes = []
+        for v in sec["visualContainers"]:
+            cfg = json.loads(v["config"])
+            sv = cfg.get("singleVisual", {})
+            kind = sv.get("visualType", "?")
+            name = cfg.get("name", "?")
+            x, y, w, h = v["x"], v["y"], v["width"], v["height"]
+
+            if x < 0 or y < 0 or x + w > PAGE_W or y + h > PAGE_H:
+                problems.append(
+                    f"{page}/{name} ({kind}): {x},{y} {w}x{h} falls outside the "
+                    f"{PAGE_W}x{PAGE_H} page")
+
+            if kind == "textbox":
+                for para in sv["objects"]["general"][0]["properties"]["paragraphs"]:
+                    for run in para["textRuns"]:
+                        pt = float(str(run["textStyle"]["fontSize"]).rstrip("pt"))
+                        need = text_height(pt)
+                        if h < need:
+                            problems.append(
+                                f"{page}/{name}: box is {h}px tall for {pt:g}pt text "
+                                f"(needs {need}px) — text will be clipped")
+            if kind != "basicShape":       # bands are deliberate z=0 backgrounds
+                boxes.append((name, kind, x, y, w, h))
+
+        for i, (n1, k1, x1, y1, w1, h1) in enumerate(boxes):
+            for n2, k2, x2, y2, w2, h2 in boxes[i + 1:]:
+                if x1 < x2 + w2 and x2 < x1 + w1 and y1 < y2 + h2 and y2 < y1 + h1:
+                    problems.append(
+                        f"{page}: {n1} ({k1}) overlaps {n2} ({k2})")
+    return problems
+
+
+def validate_fields(report, ws_id, sm_id):
+    """Check every measure and column against the deployed model before shipping.
+
+    Validating measures alone is not enough — a visual breaks on a missing
+    *column* just as hard, and shows the same 'Something's wrong with one or
+    more fields' at runtime instead of at deploy time.
+    """
+    measures, columns = report_field_refs(report)
+    headers = {"Authorization": f"Bearer {get_powerbi_token()}",
+               "Content-Type": "application/json"}
+    url = (f"https://api.powerbi.com/v1.0/myorg/groups/{ws_id}"
+           f"/datasets/{sm_id}/executeQueries")
+
+    def resolves(dax):
+        try:
+            r = requests.post(url, headers=headers,
+                              json={"queries": [{"query": dax}]}, timeout=120)
+        except Exception:
+            return True          # network trouble is not a report defect
+        return r.status_code == 200
+
+    broken = []
+    for m in sorted(measures):
+        if not resolves(f'EVALUATE ROW("v", [{m}])'):
+            broken.append(f"measure [{m}]")
+    for table, col in sorted(columns):
+        if not resolves(f"EVALUATE TOPN(1, VALUES({table}[{col}]))"):
+            broken.append(f"column {table}[{col}]")
+    return broken, len(measures), len(columns)
+
+
 def main():
     config = load_config()
     state = load_state()
@@ -485,6 +621,17 @@ def main():
     pages = len(report["sections"])
     visuals = sum(len(s["visualContainers"]) for s in report["sections"])
     print(f"   {pages} pages, {visuals} visuals")
+
+    problems = validate_layout(report)
+    if problems:
+        print("\n".join(f"   LAYOUT: {p}" for p in problems))
+        raise RuntimeError(f"{len(problems)} layout problem(s) — refusing to deploy")
+
+    broken, n_m, n_c = validate_fields(report, ws_id, sm_id)
+    if broken:
+        print("\n".join(f"   FIELD: {b} does not exist in the model" for b in broken))
+        raise RuntimeError(f"{len(broken)} broken field binding(s) — refusing to deploy")
+    print(f"   validated: layout clean, {n_m} measures + {n_c} columns resolve")
 
     parts = [
         {"path": "report.json", "payload": b64encode_json(report), "payloadType": "InlineBase64"},

@@ -417,3 +417,74 @@ def test_storyline_is_named_in_the_report(report_def, cfg):
     assert cfg["storyline"]["culprit_campaign_name"] in text
     assert cfg["storyline"]["victim_segment_id"] in text
 
+
+# ── Layout ──────────────────────────────────────────────────────────────────
+# A report can bind to every field correctly and still ship unreadable. Power BI
+# clips text that does not fit its box and lets visuals overlap, silently, with
+# no warning at deploy time. These tests are the only thing that catches it
+# before a human sees the report.
+
+def test_report_layout_has_no_clipping_or_overlap(report_def):
+    import deploy_report as dr
+    problems = dr.validate_layout(report_def["report"])
+    assert not problems, "layout defects:\n  " + "\n  ".join(problems)
+
+
+def test_textbox_height_rule_rejects_a_too_small_box():
+    """Guard the guard: the rule must actually fail on the geometry that shipped."""
+    import deploy_report as dr
+    assert dr.text_height(17) > 30, "17pt in a 30px box must be rejected"
+    assert dr.text_height(10) > 20, "10pt in a 20px box must be rejected"
+
+
+def test_header_band_contains_its_text(report_def):
+    """The banner must be tall enough for the title and subtitle stacked inside it."""
+    import deploy_report as dr
+    assert dr.HEADER_H >= (dr.HEADER_PAD_TOP + dr.HEADER_TITLE_H
+                           + dr.HEADER_SUB_H + dr.HEADER_PAD_BOTTOM)
+    for section in report_def["report"]["sections"]:
+        bands = [vc for vc in section["visualContainers"]
+                 if json.loads(vc["config"])["singleVisual"]["visualType"] == "basicShape"]
+        texts = [vc for vc in section["visualContainers"]
+                 if json.loads(vc["config"])["singleVisual"]["visualType"] == "textbox"]
+        assert bands, f"{section['displayName']} has no header band"
+        band = bands[0]
+        for t in texts:
+            assert t["y"] + t["height"] <= band["y"] + band["height"], (
+                f"{section['displayName']}: header text spills below the band")
+
+
+def test_cards_start_below_the_header(report_def):
+    import deploy_report as dr
+    for section in report_def["report"]["sections"]:
+        for vc in section["visualContainers"]:
+            sv = json.loads(vc["config"])["singleVisual"]
+            if sv["visualType"] == "cardVisual":
+                assert vc["y"] >= dr.HEADER_H, (
+                    f"{section['displayName']}: a card overlaps the header band")
+
+
+# ── Semantic model contract ─────────────────────────────────────────────────
+
+def test_deprecated_measures_are_kept_as_aliases(model_bim):
+    """Renaming a measure without keeping the old name breaks live reports.
+
+    [Line Revenue] was renamed to [Product Revenue] and dropped; a deployed
+    report bound to it started rendering 'Something's wrong with one or more
+    fields'. The old name stays as a hidden alias until no consumer uses it.
+    """
+    measures = {m["name"]: m
+                for t in model_bim["model"]["tables"]
+                for m in t.get("measures", [])}
+    assert "Line Revenue" in measures, "deprecated alias removed — this breaks live reports"
+    assert measures["Line Revenue"].get("isHidden") is True, (
+        "a deprecated alias must be hidden so it does not duplicate the model surface")
+    assert "Product Revenue" in measures
+
+
+def test_no_duplicate_measure_names(model_bim):
+    """Two measures with the same name make the model ambiguous for DAX and Copilot."""
+    names = [m["name"] for t in model_bim["model"]["tables"] for m in t.get("measures", [])]
+    dupes = {n for n in names if names.count(n) > 1}
+    assert not dupes, f"duplicate measure names: {sorted(dupes)}"
+

@@ -59,6 +59,18 @@ One command: `python deploy_all.py` (idempotent, tenant-guarded).
 - **Semantic model**: avoid ambiguous relationship paths (two routes between the same two tables) —
   the model import fails outright.
 - **`COUNTROWS(FILTER(...))` returns BLANK, not 0** → wrap in `COALESCE(..., 0)`.
+- **Renaming/deleting a measure is a BREAKING CHANGE.** Fabric deploys it green; the consuming
+  report fails only at render with "Something's wrong with one or more fields". Keep the old name
+  as a hidden alias (`isHidden: true`) until consumers migrate. `check_breaking_removals()` in
+  `deploy_semantic_model.py` blocks the deploy if a removed measure is still referenced.
+- **Validate columns, not just measures.** `EVALUATE ROW("v",[M])` tests measures;
+  `EVALUATE TOPN(1, VALUES('t'[c]))` tests columns. A broken column kills a visual just as hard.
+- **Power BI clips text — it never shrinks the font and never warns.** Rule:
+  `height >= font_pt * 2.2` (17pt→38px, 10pt→22px). Derive header geometry from the font size;
+  never hard-code box heights. `validate_layout()` blocks the deploy on clipping, overlap and
+  out-of-page bounds.
+- **`updateDefinition` can return 202/Succeeded while applying nothing** → always read the
+  definition back and compare before declaring success.
 - Capacity pauses when idle → resume before deploy/demo.
 - Never use `az rest` from a Python subprocess (hangs). Use `requests` + `az account get-access-token`.
 - PowerShell `Set-Content -Encoding utf8` writes a **BOM** and breaks JSON parsing → use

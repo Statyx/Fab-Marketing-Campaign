@@ -69,7 +69,7 @@ def _col(name, data_type, desc="", fmt="", hidden=False, summarize_none=False):
     return col
 
 
-def _measure(name, expr, desc="", fmt="", folder=""):
+def _measure(name, expr, desc="", fmt="", folder="", hidden=False):
     m = {"name": name, "expression": expr.split("\n"), "lineageTag": _tag()}
     if desc:
         m["description"] = desc
@@ -77,6 +77,8 @@ def _measure(name, expr, desc="", fmt="", folder=""):
         m["formatString"] = fmt
     if folder:
         m["displayFolder"] = folder
+    if hidden:
+        m["isHidden"] = True
     return m
 
 
@@ -417,6 +419,16 @@ def build_model_bim(config, state):
             _measure("Product Revenue", "SUM(order_lines[line_total_eur])",
                      "Revenue summed from order lines — sliceable by product category",
                      fmt="#,0", folder="Commerce"),
+            # DEPRECATED alias of [Product Revenue]. This measure was renamed and
+            # simply dropped, which broke a live report that was bound to it —
+            # a semantic model is a contract, and removing a measure is a
+            # breaking change for every downstream consumer. Kept hidden so it
+            # still resolves for existing reports without offering a duplicate
+            # to Copilot, the Data Agent or report authors. Remove only once no
+            # report references it (deploy checks this and will refuse).
+            _measure("Line Revenue", "[Product Revenue]",
+                     "Deprecated — use [Product Revenue].",
+                     fmt="#,0", folder="Commerce", hidden=True),
             _measure("Lines per Order", "DIVIDE(COUNTROWS(order_lines), [Total Orders])",
                      "Average lines per order", fmt="#,0.00", folder="Commerce"),
         ],
@@ -580,15 +592,11 @@ def build_model_bim(config, state):
     }
 
 
-def deployed_measure_names(token, ws_id, sm_id):
-    """Read the model back from Fabric and return its {(table, measure)} inventory.
-
-    Fabric stores the model as TMDL even when it is pushed as a .bim, so the
-    read-back is parsed from the TMDL parts rather than compared as JSON.
-    """
+def get_definition_parts(token, ws_id, item_kind, item_id):
+    """Fetch an item's definition parts, following Fabric's async 202 pattern."""
     headers = fabric_headers(token)
     resp = requests.post(
-        f"{API_BASE}/workspaces/{ws_id}/semanticModels/{sm_id}/getDefinition",
+        f"{API_BASE}/workspaces/{ws_id}/{item_kind}/{item_id}/getDefinition",
         headers=headers, timeout=180)
     if resp.status_code == 202:
         op_id = resp.headers.get("x-ms-operation-id", "")
@@ -597,9 +605,17 @@ def deployed_measure_names(token, ws_id, sm_id):
                             headers=headers, timeout=180)
     if resp.status_code != 200:
         raise RuntimeError(f"getDefinition failed ({resp.status_code}): {resp.text[:300]}")
+    return resp.json().get("definition", {}).get("parts", [])
 
+
+def deployed_measure_names(token, ws_id, sm_id):
+    """Read the model back from Fabric and return its {(table, measure)} inventory.
+
+    Fabric stores the model as TMDL even when it is pushed as a .bim, so the
+    read-back is parsed from the TMDL parts rather than compared as JSON.
+    """
     found = set()
-    for part in resp.json().get("definition", {}).get("parts", []):
+    for part in get_definition_parts(token, ws_id, "semanticModels", sm_id):
         if "/tables/" not in part["path"]:
             continue
         table = part["path"].split("/")[-1].removesuffix(".tmdl")
@@ -607,6 +623,62 @@ def deployed_measure_names(token, ws_id, sm_id):
         for name in re.findall(r"^\s*measure\s+(.+?)\s*=", tmdl, re.M):
             found.add((table, name.strip().strip("'\"")))
     return found
+
+
+def measures_used_by_reports(token, ws_id):
+    """Map every measure name referenced by a report in the workspace to its report.
+
+    A semantic model is a contract. Dropping a measure is a breaking change for
+    every report bound to it, and Fabric gives no warning: the report keeps its
+    reference and renders 'Something's wrong with one or more fields' at runtime.
+    That is exactly how a live report was broken by renaming [Line Revenue].
+    """
+    used = {}
+    try:
+        items = requests.get(f"{API_BASE}/workspaces/{ws_id}/items",
+                             headers=fabric_headers(token), timeout=120).json().get("value", [])
+    except Exception as exc:
+        print(f"   WARNING: could not list workspace items ({exc}); skipping consumer check")
+        return used
+
+    for item in [i for i in items if i.get("type") == "Report"]:
+        try:
+            parts = get_definition_parts(token, ws_id, "reports", item["id"])
+        except Exception as exc:
+            print(f"   WARNING: could not read report '{item['displayName']}' ({exc})")
+            continue
+        for part in parts:
+            if not part["path"].endswith("report.json"):
+                continue
+            body = base64.b64decode(part["payload"]).decode("utf-8")
+            # Legacy PBIX nests the visual config as a JSON *string*, so the
+            # measure references are only visible in the raw text.
+            for name in re.findall(r'\\?"Measure\\?":\s*\{[^{}]*?\\?"Property\\?":\s*\\?"(.*?)\\?"', body):
+                used.setdefault(name, set()).add(item["displayName"])
+    return used
+
+
+def check_breaking_removals(token, ws_id, sm_id, model_bim):
+    """Refuse to delete a measure that a report still uses."""
+    try:
+        current = {name for _, name in deployed_measure_names(token, ws_id, sm_id)}
+    except Exception as exc:
+        print(f"   WARNING: could not read current model ({exc}); skipping removal check")
+        return
+    new = {m["name"] for t in model_bim["model"]["tables"] for m in t.get("measures", [])}
+    removed = current - new
+    if not removed:
+        return
+
+    used = measures_used_by_reports(token, ws_id)
+    breaking = {m: sorted(used[m]) for m in removed if m in used}
+    if breaking:
+        detail = "; ".join(f"[{m}] used by {', '.join(r)}" for m, r in breaking.items())
+        raise RuntimeError(
+            "Refusing to deploy: this would delete measures that reports still "
+            f"reference, breaking them silently. {detail}. "
+            "Keep them as hidden deprecated aliases, or migrate the reports first.")
+    print(f"   removing {len(removed)} unused measure(s): {', '.join(sorted(removed))}")
 
 
 def verify_deployment(token, ws_id, sm_id, model_bim, repush=None):
@@ -697,6 +769,9 @@ def main():
     ]}
 
     sm_id = state.get("semantic_model_id")
+    if sm_id:
+        check_breaking_removals(token, ws_id, sm_id, model_bim)
+
     def push(target_id):
         return requests.post(
             f"{API_BASE}/workspaces/{ws_id}/semanticModels/{target_id}/updateDefinition",
