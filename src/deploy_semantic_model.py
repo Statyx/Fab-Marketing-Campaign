@@ -66,7 +66,7 @@ def _col(name, data_type, desc="", fmt="", hidden=False, summarize_none=False):
     return col
 
 
-def _measure(name, expr, desc="", fmt="", folder=""):
+def _measure(name, expr, desc="", fmt="", folder="", hidden=False):
     m = {"name": name, "expression": expr.split("\n"), "lineageTag": _tag()}
     if desc:
         m["description"] = desc
@@ -74,6 +74,8 @@ def _measure(name, expr, desc="", fmt="", folder=""):
         m["formatString"] = fmt
     if folder:
         m["displayFolder"] = folder
+    if hidden:
+        m["isHidden"] = True
     return m
 
 
@@ -403,9 +405,15 @@ def build_model_bim(config, state):
         "measures": [
             _measure("Units Sold", "SUM(order_lines[quantity])", "Units sold",
                      fmt="#,0", folder="Commerce"),
-            _measure("Line Revenue", "SUM(order_lines[line_total_eur])",
+            _measure("Product Revenue", "SUM(order_lines[line_total_eur])",
                      "Revenue at line level — sliceable by product category",
                      fmt="#,0", folder="Commerce"),
+            # Kept as a hidden alias: renaming a measure of a shared model is a
+            # breaking change — existing reports keep the old reference and fail
+            # at render, not at deploy. Remove only once no report uses it.
+            _measure("Line Revenue", "[Product Revenue]",
+                     "Deprecated alias of [Product Revenue]",
+                     fmt="#,0", folder="Commerce", hidden=True),
             _measure("Lines per Order", "DIVIDE(COUNTROWS(order_lines), [Total Orders])",
                      "Average lines per order", fmt="#,0.00", folder="Commerce"),
         ],
@@ -503,7 +511,7 @@ def build_model_bim(config, state):
                     "Entonnoir email : [Total Sends], [Sends per Customer], [Open Rate], "
                     "[Click Through Rate], [Bounce Rate], [Unsubscribe Rate], [Unsubscribes]. "
                     "Commerce : [Revenue], [Total Orders], [Average Order Value], [Units Sold], "
-                    "[Line Revenue], [Return Rate]. "
+                    "[Product Revenue], [Return Rate]. "
                     "Attribution : [Attributed Orders], [Attributed Revenue], [Attribution Rate], [Campaign ROI]. "
                     "Le score de churn est CALCULE a partir du comportement (recence, chute de frequence, "
                     "engagement, NPS, desabonnement, friction support) et ne s'applique qu'aux clients ayant "

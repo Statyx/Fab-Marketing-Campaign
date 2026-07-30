@@ -56,6 +56,28 @@ One command: `python deploy_all.py` (idempotent, tenant-guarded).
   questions — proven twice on sister projects. Route explicitly in `aiInstructions`.
 - **Legacy PBIX only** for reports (`report.json` with `sections[].visualContainers[]`), never PBIR.
   Every visual needs a `prototypeQuery`. Multi-colour bars need the same column in Category AND Series.
+- **Power BI clips text, it never shrinks it and never warns.** A box too short for its font
+  renders truncated glyphs on stage with a perfectly successful deploy. Never eyeball geometry —
+  `deploy_report.validate_layout()` computes the fit and `sys.exit(1)`s before publishing:
+  `min_height = pt * (96/72) * 1.35 + 8`  (1pt = 4/3 px @96 DPI, Segoe UI line box ~1.35, 8px padding).
+  A `cardVisual` stacks **three** texts — title + callout value + category label — and the padding
+  is **per container, not per line**: the three per-block pads collapse to one, then the card's own
+  chrome (~24px) is added on top. So `min_height = sum(pt) * 1.8 + 8 + 24`, i.e. `sum(pt) * 1.8 + 32`
+  — mirrored in the code as `… - 2 * TEXT_PAD + CARD_CHROME`. Do not write it as `+ 24`: that
+  under-reserves by 8px. This is the one that bites: a 112px card holding 11 + 30 + 9 pt needs
+  122px and silently clips its label. Shrink the callout font before growing the card, the row
+  grid rarely has 10 spare pixels.
+  **These constants (1.35, 8, 24) are calculated, never measured against the Power BI renderer.**
+  The only evidence they hold is a human looking at a rendered page. Treat them as a working
+  approximation, not a verified fact, and re-check visually when a font size changes.
+- Header bands are `z=0` decoration with the title/subtitle textboxes at `z=1` on top; the overlap
+  check therefore only considers `z >= 1`. Two textboxes that overlap by 2px is a real defect.
+- **Renaming a measure in a shared semantic model is a breaking change.** Fabric does not warn,
+  the report keeps the old reference and fails only at render with "Something's wrong with one or
+  more fields". Keep the old name as a hidden alias measure (`isHidden: true`) pointing at the new
+  one, and check consumers before deploying.
+- Test a **column** with `EVALUATE TOPN(1, VALUES('table'[col]))`, not with `ROW()` — `ROW()` only
+  exercises measures and lets broken column references through.
 - **Semantic model**: avoid ambiguous relationship paths (two routes between the same two tables) —
   the model import fails outright.
 - **`COUNTROWS(FILTER(...))` returns BLANK, not 0** → wrap in `COALESCE(..., 0)`.

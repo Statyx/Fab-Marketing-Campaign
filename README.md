@@ -217,7 +217,7 @@ replay the item assignments (the file cannot carry them). Full steps and the ite
 | Layer | State |
 |---|---|
 | Config-driven generator with real churn | ✅ validated |
-| Test gate | ✅ 72 passing |
+| Test gate | ✅ 74 passing |
 | Workspace + Lakehouse (15 CSV + 420 text files) | ✅ deployed |
 | Delta tables + curated churn views | ✅ deployed (Spark notebook) |
 | Semantic model (Direct Lake, 12 tables / 48 measures) | ✅ deployed |
