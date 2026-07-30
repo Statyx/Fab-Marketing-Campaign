@@ -94,6 +94,35 @@ def model_inventory(cfg):
     return columns, measures
 
 
+def test_report_layout_leaves_no_clipped_text(cfg):
+    """Power BI clips text that does not fit and never warns.
+
+    A 17pt title in a 30px box, or a card stacking 11+30+9pt into 112px, renders
+    truncated on stage with no error at deploy time. validate_layout() computes
+    the real fit (1pt = 96/72 px, Segoe UI line box 1.35x, 8px padding) so the
+    defect fails here instead of in front of the customer.
+    """
+    import deploy_report as dr
+    report, _, _, _ = dr.build_report(dict(_STUB_STATE), cfg)
+    problems = dr.validate_layout(report)
+    assert not problems, "layout defects:\n  " + "\n  ".join(problems)
+
+
+def test_layout_validator_actually_detects_clipping(cfg):
+    """A validator that cannot fail is worthless — prove it rejects a bad box."""
+    import deploy_report as dr
+    report, _, _, _ = dr.build_report(dict(_STUB_STATE), cfg)
+    section = report["sections"][0]
+    for vc in section["visualContainers"]:
+        conf = json.loads(vc["config"])
+        if conf.get("singleVisual", {}).get("visualType") == "textbox":
+            vc["height"] = 12  # far too short for any font we use
+            break
+    else:
+        pytest.fail("no textbox found to corrupt")
+    assert dr.validate_layout(report), "validator passed a 12px box holding 17pt text"
+
+
 @pytest.fixture(scope="module")
 def report_refs(cfg):
     """[(page, visual, kind, table, property), ...] pulled from every prototypeQuery."""

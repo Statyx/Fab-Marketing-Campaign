@@ -242,7 +242,7 @@ Everything below was deployed **and read back from the tenant** on workspace
 | Layer | Code | Deployed |
 |---|---|---|
 | Config-driven generator with real churn | ✅ | n/a |
-| Test gate (101 tests, fully offline) | ✅ | n/a |
+| Test gate (104 tests, fully offline) | ✅ | n/a |
 | Workspace + Lakehouse (15 CSV + 420 text files) | ✅ | ✅ `LH_Customer360` |
 | Delta tables + curated churn views (Spark notebook) | ✅ | ✅ `NB_Setup_Customer360` |
 | Semantic model (Direct Lake, 12 tables / 50 measures) | ✅ | ✅ `SM_Marketing_Analytics` |

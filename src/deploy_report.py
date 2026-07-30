@@ -23,7 +23,7 @@ A filter only travels from the "one" side to the "many" side, so:
   - crm_customer_profile -> does NOT filter orders  => risk slicing must use the
                           profile's own measures ([Revenue at Risk], [CLV at Risk])
   - crm_segments       -> only filters crm_customer_segments
-  - products           -> filters order_lines but NOT orders  => use [Line Revenue]
+  - products           -> filters order_lines but NOT orders  => use [Product Revenue]
   - marketing_campaigns -> filters marketing_sends and (via sends) marketing_events
 Every visual below respects that graph; breaking it yields blank visuals.
 """
@@ -48,6 +48,7 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 import json
+import re
 from pathlib import Path
 
 import requests
@@ -128,7 +129,7 @@ def _card(name, x, y, w, h, table, measure, accent, title, z=1):
         "drillFilterOtherVisuals": True,
         "objects": {
             "outline": [{"properties": {"show": _lit("false")}}],
-            "calloutValue": [{"properties": {"fontSize": _lit("30D"), "bold": _lit("true"),
+            "calloutValue": [{"properties": {"fontSize": _lit("24D"), "bold": _lit("true"),
                                              "color": _solid(accent)}}],
             "categoryLabel": [{"properties": {"show": _lit("true"), "fontSize": _lit("9D"),
                                               "color": _solid("#8A8886")}}],
@@ -318,6 +319,111 @@ def _band(name, x, y, w, h, color):
             }), "filters": "[]"}
 
 
+# ── Layout validation ───────────────────────────────────────────────────────
+
+# Power BI never shrinks a font to fit and never warns: when a text element is
+# taller than its box it simply clips the glyphs, and you only find out by
+# looking at the rendered page. So the fit is computed here and a violation
+# fails the build.
+#
+#   1pt = 96/72 px at standard DPI, Segoe UI line box ~1.35x the font size,
+#   plus ~8px of element padding.
+PX_PER_PT = 96.0 / 72.0
+LINE_BOX = 1.35
+TEXT_PAD = 8.0
+
+# A cardVisual stacks title + callout value + category label, and adds its own
+# chrome (padding, inter-element spacing, rounded border). Padding is per
+# container, not per line, so the three per-block pads collapse to one:
+# need = sum(pt) * 1.8 + TEXT_PAD + CARD_CHROME.
+#
+# NOTE: 1.35, 8 and 24 are calculated, never measured against the Power BI
+# renderer. A visual check of a rendered page is the only evidence they hold.
+CARD_CHROME = 24.0
+
+
+def _text_height(pt, lines=1):
+    """Minimum box height, in px, for `lines` lines of `pt`-point text."""
+    return pt * PX_PER_PT * LINE_BOX * lines + TEXT_PAD
+
+
+def _font_pt(objects, group, default):
+    """Read a fontSize literal such as '24D' out of a visual's object model."""
+    try:
+        raw = objects[group][0]["properties"]["fontSize"]["expr"]["Literal"]["Value"]
+    except (KeyError, IndexError, TypeError):
+        return default
+    m = re.match(r"(\d+(?:\.\d+)?)", str(raw))
+    return float(m.group(1)) if m else default
+
+
+def validate_layout(report):
+    """Fail the build on clipped text, off-canvas visuals and overlaps.
+
+    Returns a list of human-readable problems; empty means the page is safe.
+    """
+    problems = []
+
+    for section in report["sections"]:
+        page = section["displayName"]
+        boxes = []  # (name, x, y, w, h, z) for the overlap pass
+
+        for vc in section["visualContainers"]:
+            cfg = json.loads(vc["config"])
+            sv = cfg.get("singleVisual", {})
+            vtype = sv.get("visualType", "?")
+            name = cfg.get("name", "?")
+            x, y, w, h = vc["x"], vc["y"], vc["width"], vc["height"]
+            boxes.append((name, x, y, w, h, vc.get("z", 0)))
+
+            if x < 0 or y < 0 or x + w > CANVAS_W or y + h > CANVAS_H:
+                problems.append(
+                    f"{page}/{name}: off-canvas — box ({x},{y},{w}x{h}) "
+                    f"leaves the {CANVAS_W}x{CANVAS_H} page")
+
+            if vtype == "textbox":
+                runs = (sv["objects"]["general"][0]["properties"]["paragraphs"][0]
+                        ["textRuns"][0])
+                pt = float(re.match(r"(\d+(?:\.\d+)?)", runs["textStyle"]["fontSize"]).group(1))
+                need = _text_height(pt)
+                if h < need:
+                    problems.append(
+                        f"{page}/{name}: text clipped — {pt:g}pt needs {need:.0f}px, "
+                        f"box is {h}px")
+
+            elif vtype == "cardVisual":
+                objs = sv.get("objects", {})
+                callout = _font_pt(objs, "calloutValue", 30.0)
+                category = _font_pt(objs, "categoryLabel", 9.0)
+                title = _font_pt(sv.get("vcObjects", {}), "title", 12.0)
+                need = (_text_height(title) + _text_height(callout)
+                        + _text_height(category) - 2 * TEXT_PAD + CARD_CHROME)
+                if h < need:
+                    problems.append(
+                        f"{page}/{name}: card stack clipped — title {title:g}pt + "
+                        f"value {callout:g}pt + label {category:g}pt needs "
+                        f"{need:.0f}px, box is {h}px")
+
+            elif "title" in sv.get("vcObjects", {}):
+                pt = _font_pt(sv["vcObjects"], "title", 12.0)
+                need = _text_height(pt) + 60  # title band + a usable plot area
+                if h < need:
+                    problems.append(
+                        f"{page}/{name}: {vtype} too short for its title — needs "
+                        f"{need:.0f}px, box is {h}px")
+
+        # Decorative bands sit at z=0 underneath the header text on purpose;
+        # anything from z=1 up is content and must not collide.
+        content = [b for b in boxes if b[5] >= 1]
+        for i, (n1, x1, y1, w1, h1, _) in enumerate(content):
+            for n2, x2, y2, w2, h2, _ in content[i + 1:]:
+                if (x1 < x2 + w2 and x2 < x1 + w1
+                        and y1 < y2 + h2 and y2 < y1 + h1):
+                    problems.append(f"{page}: {n1} and {n2} overlap")
+
+    return problems
+
+
 # ── Report definition ───────────────────────────────────────────────────────
 
 def build_report(state, config):
@@ -337,23 +443,26 @@ def build_report(state, config):
     NEUTRAL, ALERT, GOOD, PREMIUM = "#252423", "#863C41", "#027180", "#896610"
 
     def header(prefix, accent, title, subtitle):
+        # Geometry is driven by validate_layout(): a text box must be at least
+        # pt * (96/72) * 1.35 + 8px or Power BI clips the glyphs — it never
+        # shrinks the font and never warns.
         return [
-            _band(f"{prefix}_band", 0, 0, CANVAS_W, 64, accent),
-            _textbox(f"{prefix}_t", 28, 12, 1100, 30, title, "17pt", "#FFFFFF"),
-            _textbox(f"{prefix}_s", 28, 40, 1100, 20, subtitle, "10pt", "#F3F2F1"),
+            _band(f"{prefix}_band", 0, 0, CANVAS_W, 80, accent),
+            _textbox(f"{prefix}_t", 28, 6, 1100, 42, title, "17pt", "#FFFFFF"),
+            _textbox(f"{prefix}_s", 28, 50, 1100, 26, subtitle, "10pt", "#F3F2F1"),
         ]
 
     # ── Page 1 — Direction : la valeur du portefeuille et son exposition ──
     p1 = header("d", C_BLUE, "Customer 360 — Pilotage Direction",
                 "Valeur du portefeuille, exposition a l'attrition et sante de la relation client") + [
-        _card("c1", 28, 78, 238, 112, "orders", "Revenue", NEUTRAL, "Chiffre d'Affaires"),
-        _card("c2", 278, 78, 238, 112, "crm_customers", "Total Customers", NEUTRAL, "Clients"),
-        _card("c3", 528, 78, 238, 112, "crm_customer_profile", "At Risk %", ALERT, "Part a Risque"),
-        _card("c4", 778, 78, 238, 112, "crm_customer_profile", "CLV at Risk", ALERT, "Valeur Vie Exposee"),
-        _card("c5", 1028, 78, 224, 112, "crm_customer_profile", "Avg NPS", GOOD, "NPS Moyen"),
-        _line("l1", 28, 202, 760, 248, "orders", "order_at", "orders", "Revenue",
+        _card("c1", 28, 88, 238, 112, "orders", "Revenue", NEUTRAL, "Chiffre d'Affaires"),
+        _card("c2", 278, 88, 238, 112, "crm_customers", "Total Customers", NEUTRAL, "Clients"),
+        _card("c3", 528, 88, 238, 112, "crm_customer_profile", "At Risk %", ALERT, "Part a Risque"),
+        _card("c4", 778, 88, 238, 112, "crm_customer_profile", "CLV at Risk", ALERT, "Valeur Vie Exposee"),
+        _card("c5", 1028, 88, 224, 112, "crm_customer_profile", "Avg NPS", GOOD, "NPS Moyen"),
+        _line("l1", 28, 208, 760, 242, "orders", "order_at", "orders", "Revenue",
               "Chiffre d'Affaires dans le Temps (le decrochage post-campagne)", color=C_BLUE),
-        _donut("dn1", 800, 202, 452, 248, "crm_customer_profile", "risk_band",
+        _donut("dn1", 800, 208, 452, 242, "crm_customer_profile", "risk_band",
                "crm_customer_profile", "Profiled Customers",
                "Repartition du Portefeuille par Bande de Risque"),
         _bar("b1", 28, 462, 1224, 246, "crm_customers", "lifecycle_stage",
@@ -364,15 +473,15 @@ def build_report(state, config):
     # ── Page 2 — Retention : DETECT ──
     p2 = header("r", C_TEAL, "Retention — Detection de la Cohorte a Risque",
                 f"Clients acheteurs scorant >= {at_risk}/100 : recence, engagement, desabonnement, friction") + [
-        _card("c6", 28, 78, 238, 112, "crm_customer_profile", "Customers at Risk", ALERT, "Clients a Risque"),
-        _card("c7", 278, 78, 238, 112, "crm_customer_profile", "Avg Churn Score", ALERT, "Score Moyen"),
-        _card("c8", 528, 78, 238, 112, "crm_customer_profile", "Avg Recency (days)", NEUTRAL, "Recence Moyenne (j)"),
-        _card("c9", 778, 78, 238, 112, "crm_customer_profile", "Unsubscribed Customers", ALERT, "Desabonnes"),
-        _card("c10", 1028, 78, 224, 112, "crm_customers", "Churned Customers", ALERT, "Clients Perdus"),
-        _bar("b2", 28, 202, 760, 248, "crm_customer_profile", "risk_band",
+        _card("c6", 28, 88, 238, 112, "crm_customer_profile", "Customers at Risk", ALERT, "Clients a Risque"),
+        _card("c7", 278, 88, 238, 112, "crm_customer_profile", "Avg Churn Score", ALERT, "Score Moyen"),
+        _card("c8", 528, 88, 238, 112, "crm_customer_profile", "Avg Recency (days)", NEUTRAL, "Recence Moyenne (j)"),
+        _card("c9", 778, 88, 238, 112, "crm_customer_profile", "Unsubscribed Customers", ALERT, "Desabonnes"),
+        _card("c10", 1028, 88, 224, 112, "crm_customers", "Churned Customers", ALERT, "Clients Perdus"),
+        _bar("b2", 28, 208, 760, 242, "crm_customer_profile", "risk_band",
              "crm_customer_profile", "Revenue at Risk",
              "Chiffre d'Affaires Historique Expose par Bande de Risque"),
-        _donut("dn2", 800, 202, 452, 248, "crm_interactions", "sentiment",
+        _donut("dn2", 800, 208, 452, 242, "crm_interactions", "sentiment",
                "crm_interactions", "Total Interactions",
                "Interactions Support par Sentiment"),
         _table("tbl1", 28, 462, 1224, 246, [
@@ -389,15 +498,15 @@ def build_report(state, config):
     # ── Page 3 — Marketing : DIAGNOSE (la cause racine) ──
     p3 = header("m", C_GOLD, "Marketing — Diagnostic de la Pression Commerciale",
                 f"Pression email par campagne : « {culprit} » sur-sollicite le segment {victim}") + [
-        _card("c11", 28, 78, 238, 112, "marketing_sends", "Sends per Customer", ALERT, "Emails / Client"),
-        _card("c12", 278, 78, 238, 112, "marketing_events", "Unsubscribe Rate", ALERT, "Taux de Desabo."),
-        _card("c13", 528, 78, 238, 112, "marketing_events", "Open Rate", GOOD, "Taux d'Ouverture"),
-        _card("c14", 778, 78, 238, 112, "marketing_events", "Click Through Rate", GOOD, "Taux de Clic"),
-        _card("c15", 1028, 78, 224, 112, "marketing_sends", "Total Sends", NEUTRAL, "Emails Envoyes"),
-        _bar("b3", 28, 202, 760, 248, "marketing_campaigns", "campaign_name",
+        _card("c11", 28, 88, 238, 112, "marketing_sends", "Sends per Customer", ALERT, "Emails / Client"),
+        _card("c12", 278, 88, 238, 112, "marketing_events", "Unsubscribe Rate", ALERT, "Taux de Desabo."),
+        _card("c13", 528, 88, 238, 112, "marketing_events", "Open Rate", GOOD, "Taux d'Ouverture"),
+        _card("c14", 778, 88, 238, 112, "marketing_events", "Click Through Rate", GOOD, "Taux de Clic"),
+        _card("c15", 1028, 88, 224, 112, "marketing_sends", "Total Sends", NEUTRAL, "Emails Envoyes"),
+        _bar("b3", 28, 208, 760, 242, "marketing_campaigns", "campaign_name",
              "marketing_sends", "Sends per Customer",
              f"Emails par Client et par Campagne — « {culprit} » decroche"),
-        _donut("dn3", 800, 202, 452, 248, "marketing_campaigns", "objective",
+        _donut("dn3", 800, 208, 452, 242, "marketing_campaigns", "objective",
                "marketing_campaigns", "Total Budget",
                "Budget par Objectif de Campagne"),
         _column("col1", 28, 462, 605, 246, "marketing_campaigns", "campaign_name",
@@ -411,14 +520,14 @@ def build_report(state, config):
     # ── Page 4 — Commerce : QUANTIFY ──
     p4 = header("k", C_RED, "Commerce — Impact Business & Attribution",
                 "Chiffre d'affaires, panier moyen, contribution des campagnes et retours produits") + [
-        _card("c16", 28, 78, 238, 112, "orders", "Revenue", NEUTRAL, "Chiffre d'Affaires"),
-        _card("c17", 278, 78, 238, 112, "orders", "Total Orders", NEUTRAL, "Commandes"),
-        _card("c18", 528, 78, 238, 112, "orders", "Average Order Value", GOOD, "Panier Moyen"),
-        _card("c19", 778, 78, 238, 112, "orders", "Attributed Revenue", PREMIUM, "CA Attribue"),
-        _card("c20", 1028, 78, 224, 112, "returns", "Return Rate", ALERT, "Taux de Retour"),
-        _bar("b4", 28, 202, 760, 248, "products", "category", "order_lines", "Line Revenue",
+        _card("c16", 28, 88, 238, 112, "orders", "Revenue", NEUTRAL, "Chiffre d'Affaires"),
+        _card("c17", 278, 88, 238, 112, "orders", "Total Orders", NEUTRAL, "Commandes"),
+        _card("c18", 528, 88, 238, 112, "orders", "Average Order Value", GOOD, "Panier Moyen"),
+        _card("c19", 778, 88, 238, 112, "orders", "Attributed Revenue", PREMIUM, "CA Attribue"),
+        _card("c20", 1028, 88, 224, 112, "returns", "Return Rate", ALERT, "Taux de Retour"),
+        _bar("b4", 28, 208, 760, 242, "products", "category", "order_lines", "Product Revenue",
              "Chiffre d'Affaires par Categorie de Produit"),
-        _donut("dn4", 800, 202, 452, 248, "orders", "channel", "orders", "Revenue",
+        _donut("dn4", 800, 208, 452, 242, "orders", "channel", "orders", "Revenue",
                "Repartition du CA par Canal de Vente"),
         _bar("b5", 28, 462, 605, 246, "returns", "reason", "returns", "Total Returns",
              "Retours par Motif"),
@@ -510,6 +619,15 @@ def main():
     pages = len(report["sections"])
     visuals = sum(len(s["visualContainers"]) for s in report["sections"])
     print(f"   {pages} pages, {visuals} visuals")
+
+    layout_problems = validate_layout(report)
+    if layout_problems:
+        print(f"   Layout validation FAILED ({len(layout_problems)} problems):")
+        for p in layout_problems:
+            print(f"     - {p}")
+        print("   Nothing was published. Fix the geometry and re-run.")
+        sys.exit(1)
+    print("   Layout validated: no clipped text, no overlap, all on canvas")
 
     parts = [
         {"path": "report.json", "payload": b64encode_json(report), "payloadType": "InlineBase64"},

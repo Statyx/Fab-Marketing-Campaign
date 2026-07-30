@@ -62,25 +62,39 @@ One command: `python deploy_all.py` (idempotent, tenant-guarded).
   questions — proven twice on sister projects. Route explicitly in `aiInstructions`.
 - **Legacy PBIX only** for reports (`report.json` with `sections[].visualContainers[]`), never PBIR.
   Every visual needs a `prototypeQuery`. Multi-colour bars need the same column in Category AND Series.
+- **Power BI clips text — it never shrinks the font and never warns.** A box too short for its
+  font renders truncated glyphs on stage with a perfectly successful deploy. Never eyeball
+  geometry — `validate_layout()` computes the fit and `sys.exit(1)`s before publishing.
+  Two terms, kept separate: line height is **proportional**, padding/chrome is a **constant**.
+  A single "px per pt" multiplier cannot express a constant and under-sizes small text.
+  `min_height = pt * (96/72) * 1.35 + 8`  (1pt = 4/3 px @96 DPI, Segoe UI line box ~1.35, 8px pad).
+  A `cardVisual` stacks **three** texts — title + callout value + category label — and the padding
+  is **per container, not per line**: the three per-block pads collapse to one, then the card's own
+  chrome (~24px) is added on top. So `min_height = sum(pt) * 1.8 + 8 + 24`, i.e. `sum(pt) * 1.8 + 32`
+  — mirrored in the code as `… - 2 * TEXT_PAD + CARD_CHROME`. Do not write it as `+ 24`: that
+  under-reserves by 8px. This is the one that bites: a 112px card holding 11 + 30 + 9 pt needs
+  122px and silently clips its label. Shrink the callout font before growing the card, the row
+  grid rarely has 10 spare pixels.
+  **These constants (1.35, 8, 24) are calculated, never measured against the Power BI renderer.**
+  The only evidence they hold is a human looking at a rendered page. Treat them as a working
+  approximation, not a verified fact, and re-check visually when a font size changes.
+- Header bands are `z=0` decoration with the title/subtitle textboxes at `z=1` on top; the overlap
+  check therefore only considers `z >= 1`. Two textboxes that overlap by 2px is a real defect.
+- **Renaming a measure in a shared semantic model is a breaking change.** Fabric does not warn,
+  the report keeps the old reference and fails only at render with "Something's wrong with one or
+  more fields". Keep the old name as a hidden alias measure (`isHidden: true`) pointing at the new
+  one, and check consumers before deploying.
+- **Validate columns, not just measures.** `EVALUATE ROW("v",[M])` only exercises measures and lets
+  broken column references through; test a column with `EVALUATE TOPN(1, VALUES('t'[c]))`.
+  A broken column kills a visual just as hard.
 - **Semantic model**: avoid ambiguous relationship paths (two routes between the same two tables) —
   the model import fails outright.
 - **`COUNTROWS(FILTER(...))` returns BLANK, not 0** → wrap in `COALESCE(..., 0)`.
 - **One shared semantic model, several generators → the push must be a UNION.** Each script
   defines the model in full, so pushing it replaces everything and whoever deploys last erases the
-  other's measures — the report then fails only at render with "Something's wrong with one or more
-  fields". `carry_over_measures_reports_use()` in `deploy_semantic_model.py` reads the live model
-  back and copies over any measure it doesn't define that a report still uses (hidden, DAX
-  verbatim). Unused ones are still dropped. Renaming stays: new name + old name as `isHidden` alias.
-- **Validate columns, not just measures.** `EVALUATE ROW("v",[M])` tests measures;
-  `EVALUATE TOPN(1, VALUES('t'[c]))` tests columns. A broken column kills a visual just as hard.
-- **Power BI clips text — it never shrinks the font and never warns.** Two terms, kept separate:
-  line height is proportional (`pt * 1.8`), padding/chrome is **constant** (~8px textbox, ~32px
-  card). A single "px per pt" multiplier cannot express a constant and under-sizes small text.
-  These constants are **derived, never measured** against the renderer — do not restate them as
-  verified. A **card stacks three texts** (title + calloutValue + categoryLabel) — sizing it
-  against the callout alone clips the label. `validate_layout()` blocks the deploy on clipping,
-  card stacks, overlap (only at `z >= 1`; the header band is a deliberate `z = 0` background)
-  and out-of-page.
+  other's measures. `carry_over_measures_reports_use()` in `deploy_semantic_model.py` reads the live
+  model back and copies over any measure it doesn't define that a report still uses (hidden, DAX
+  verbatim). Unused ones are still dropped.
 - **`updateDefinition` can return 202/Succeeded while applying nothing** → always read the
   definition back and compare before declaring success.
 - Capacity pauses when idle → resume before deploy/demo.

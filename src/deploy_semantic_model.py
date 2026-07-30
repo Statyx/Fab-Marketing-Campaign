@@ -414,17 +414,19 @@ def build_model_bim(config, state):
         "measures": [
             _measure("Units Sold", "SUM(order_lines[quantity])", "Units sold",
                      fmt="#,0", folder="Commerce"),
-            # [Revenue] lives on orders, which has no relationship to products —
+            # [Revenue] lives on orders, which has no relationship to products ?
             # revenue by product category has to be summed from the lines.
             _measure("Product Revenue", "SUM(order_lines[line_total_eur])",
-                     "Revenue summed from order lines — sliceable by product category",
+                     "Revenue at line level ? sliceable by product category",
                      fmt="#,0", folder="Commerce"),
-            # Both names must resolve: this generator's report binds to
-            # [Product Revenue], the other one's binds to [Line Revenue]. Kept
-            # hidden so it does not show up twice for Copilot, the Data Agent or
-            # report authors. Safe to delete once no report references it.
+            # Kept as a hidden alias: renaming a measure of a shared model is a
+            # breaking change ? existing reports keep the old reference and fail
+            # at render, not at deploy. Both names must resolve: this generator's
+            # report binds to [Product Revenue], the other one's to [Line Revenue].
+            # Hidden so it does not show up twice for Copilot, the Data Agent or
+            # report authors. Remove only once no report uses it.
             _measure("Line Revenue", "[Product Revenue]",
-                     "Deprecated — use [Product Revenue].",
+                     "Deprecated alias of [Product Revenue]",
                      fmt="#,0", folder="Commerce", hidden=True),
             _measure("Lines per Order", "DIVIDE(COUNTROWS(order_lines), [Total Orders])",
                      "Average lines per order", fmt="#,0.00", folder="Commerce"),
