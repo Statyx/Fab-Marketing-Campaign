@@ -1,0 +1,59 @@
+{
+  "name": "Accessible Fluent2 (LEC)",
+  "$schema": "https://raw.githubusercontent.com/microsoft/powerbi-desktop-samples/main/Report%20Theme%20JSON%20Schema/reportThemeSchema-2.114.json",
+  "dataColors": [
+    "#863C41",
+    "#F6B6C8",
+    "#896610",
+    "#E6E689",
+    "#027180",
+    "#86E2EE",
+    "#00008F",
+    "#B2CEEC"
+  ],
+  "foreground": "#252423",
+  "foregroundNeutralSecondary": "#605E5C",
+  "background": "#FFFFFF",
+  "backgroundLight": "#F5F4F2",
+  "backgroundNeutral": "#EDEBE9",
+  "tableAccent": "#027180",
+  "good": "#58C645",
+  "neutral": "#FDCC39",
+  "bad": "#FF4E56",
+  "maximum": "#914146",
+  "center": "#FACCD9",
+  "minimum": "#C3AB71",
+  "null": "#FF4E56",
+  "hyperlink": "#00008F",
+  "visitedHyperlink": "#863C41",
+  "textClasses": {
+    "callout": { "fontSize": 30, "fontFace": "Segoe UI Semibold", "color": "#252423" },
+    "title": { "fontSize": 12, "fontFace": "Segoe UI Semibold", "color": "#252423" },
+    "header": { "fontSize": 12, "fontFace": "Segoe UI Semibold", "color": "#252423" },
+    "label": { "fontSize": 10, "fontFace": "Segoe UI", "color": "#605E5C" }
+  },
+  "visualStyles": {
+    "*": {
+      "*": {
+        "background": [{ "show": true, "color": { "solid": { "color": "#FFFFFF" } } }],
+        "border": [{ "show": true, "color": { "solid": { "color": "#E1DFDD" } }, "radius": 10 }],
+        "dropShadow": [{
+          "show": true,
+          "preset": "Custom",
+          "color": { "solid": { "color": "#CCCCCC" } },
+          "position": "Outer",
+          "shadowBlur": 6,
+          "shadowDistance": 3,
+          "transparency": 80
+        }],
+        "title": [{
+          "show": true,
+          "fontColor": { "solid": { "color": "#252423" } },
+          "fontSize": 12,
+          "titleFontFamily": "Segoe UI Semibold",
+          "heading": "H3"
+        }]
+      }
+    }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "workspace_id": "",
+  "lakehouse_id": "",
+  "lakehouse_sql_endpoint": "",
+  "notebook_setup_id": "",
+  "ontology_id": "",
+  "graph_model_id": "",
+  "semantic_model_id": "",
+  "report_id": "",
+  "data_agent_id": ""
+}

@@ -1,0 +1,139 @@
+# CDR - Marketing Campaign — Configuration
+# Fab-Marketing-Campaign: Customer 360 (CRM + Marketing + Commerce) on Microsoft Fabric,
+# built around a CHURN storyline that is derived from behaviour, not invented.
+# Everything the generator and the deploy scripts need lives here — no hard-coded values in code.
+#
+# SETUP: copy this file to `src/config.yaml` and fill in the four values below.
+#   cp src/config.example.yaml src/config.yaml
+# `src/config.yaml` is gitignored — never commit your real identifiers.
+#
+#   capacity_id     -> Fabric portal > Settings > Admin portal > Capacity settings
+#   tenant_id       -> az account show --query tenantId -o tsv
+#   az_subscription -> az account show --query name -o tsv
+
+workspace_name: "CDR - Marketing Campaign"
+capacity_id: "00000000-0000-0000-0000-000000000000"    # <your Fabric capacity id>
+fabric_api_base: "https://api.fabric.microsoft.com/v1"
+tenant_id: "00000000-0000-0000-0000-000000000000"      # <your Entra tenant id>
+az_subscription: "<your-azure-subscription-name>"      # deploy_all.py pins az to this (avoids tenant flip -> 404)
+
+# ── Items ────────────────────────────────────────────────────────
+lakehouse_name: "LH_Customer360"
+ontology_name: "ONT_Customer360"
+semantic_model_name: "SM_Marketing_Analytics"
+report_name: "RPT_Marketing_Churn"
+data_agent_name: "Marketing_Churn_Agent"
+
+# ── THE STORYLINE ────────────────────────────────────────────────
+# A single over-mailed campaign creates email fatigue in the most valuable segment,
+# which unsubscribes, stops buying, and churns. Detect -> diagnose -> quantify impact.
+#
+#   CAMP_007 "Black Friday Blast"  --over-mails-->  SEG_HIGH_VALUE
+#        -> unsubscribe spike -> engagement collapse -> order frequency drop -> churn
+#
+# This is the marketing equivalent of the culprit gate / culprit device in the sister demos.
+storyline:
+  culprit_campaign_id: "CAMP_007"
+  culprit_campaign_name: "Black Friday Blast"
+  victim_segment_id: "SEG_HIGH_VALUE"
+  # Customers in the victim segment who received the culprit campaign get:
+  fatigue_send_multiplier: 4.0     # 4x the normal number of sends (the root cause)
+  fatigue_unsub_multiplier: 6.0    # unsubscribe rate explodes
+  fatigue_engagement_decay: 0.35   # open/click rates fall to 35% of baseline afterwards
+  fatigue_order_gap_days: 120      # they stop ordering for ~4 months -> recency collapses
+
+# ── Churn model (DERIVED, never random) ──────────────────────────
+# churn_risk_score = weighted blend of behavioural signals, each normalised 0..1.
+# The weights are the demo's "business rules" and are surfaced in the Data Agent instructions.
+churn_model:
+  weights:
+    recency: 0.30          # days since last order (higher = worse)
+    frequency_drop: 0.20   # orders in last 90d vs previous 90d
+    engagement_decay: 0.20 # open/click rate vs their own baseline
+    nps: 0.15              # detractor = worse
+    unsubscribed: 0.10     # opted out of email
+    support_friction: 0.05 # negative / unresolved interactions
+  # Label thresholds used for the "at risk" cohort and for report slicing
+  risk_bands:
+    - { name: "Low",      min: 0,  max: 39 }
+    - { name: "Medium",   min: 40, max: 64 }
+    - { name: "High",     min: 65, max: 84 }
+    - { name: "Critical", min: 85, max: 100 }
+  at_risk_threshold: 65    # >= this is the actionable cohort
+
+# ── Volumes (kept demo-sized: fast to generate, big enough to be credible) ─
+volumes:
+  accounts: 800
+  customers: 12000
+  segments: 12
+  campaigns: 20
+  assets_per_campaign: 3
+  interactions: 45000
+  products: 150
+  # sends / events / orders are DERIVED from behaviour, not fixed counts
+
+# ── Business parameters ──────────────────────────────────────────
+business:
+  window_days: 540              # 18 months of history
+  reference_date: "2026-06-30"  # "today" for recency computations (deterministic)
+
+  # Email engagement baselines (before fatigue)
+  open_rate_baseline: 0.22
+  click_rate_of_open: 0.09      # CTR is expressed as clicks / opens
+  bounce_rate: 0.025
+  unsub_rate_baseline: 0.004
+
+  # Purchase behaviour
+  orders_per_active_customer_year: 3.2
+  avg_order_value_eur: 145       # realistic B2C basket
+  aov_std_eur: 70
+  return_rate: 0.07
+
+  # Attribution: last-touch, 14-day window. Target ~9% of orders attributed.
+  attribution_window_days: 14
+  target_attributed_share: 0.09
+
+  # Lifecycle mix (before the storyline is applied)
+  lifecycle_mix:
+    - { stage: "lead",     weight: 0.14 }
+    - { stage: "prospect", weight: 0.18 }
+    - { stage: "active",   weight: 0.45 }
+    - { stage: "at_risk",  weight: 0.15 }
+    - { stage: "churned",  weight: 0.08 }
+
+  nps_mix:
+    detractors: 0.20   # 0-6
+    passives:   0.30   # 7-8
+    promoters:  0.50   # 9-10
+
+# ── Segments (SEG_HIGH_VALUE is the storyline victim) ────────────
+segments:
+  - { id: "SEG_HIGH_VALUE",  name: "High Value",        rule: "CLV > 3000 EUR",              premium: true }
+  - { id: "SEG_VIP",         name: "VIP",               rule: "CLV > 8000 EUR and NPS >= 9", premium: true }
+  - { id: "SEG_LOYAL",       name: "Loyal",             rule: "5+ orders, active",           premium: false }
+  - { id: "SEG_NEW",         name: "New Customers",     rule: "first order < 90 days",       premium: false }
+  - { id: "SEG_AT_RISK",     name: "At Risk",           rule: "churn score >= 65",           premium: false }
+  - { id: "SEG_WINBACK",     name: "Winback Targets",   rule: "churned < 6 months ago",      premium: false }
+  - { id: "SEG_DORMANT",     name: "Dormant",           rule: "no order for 12 months",      premium: false }
+  - { id: "SEG_DISCOUNT",    name: "Discount Seekers",  rule: "80%+ orders with promo",      premium: false }
+  - { id: "SEG_FULLPRICE",   name: "Full Price Buyers", rule: "no promo usage",              premium: true }
+  - { id: "SEG_LOW_NPS",     name: "Low NPS",           rule: "NPS <= 6",                    premium: false }
+  - { id: "SEG_ENGAGED",     name: "Highly Engaged",    rule: "open rate > 40%",             premium: false }
+  - { id: "SEG_UNSUB",       name: "Unsubscribed",      rule: "opted out of email",          premium: false }
+
+# ── Product categories ───────────────────────────────────────────
+product_categories:
+  - { name: "Electronics", margin: 0.22 }
+  - { name: "Home",        margin: 0.38 }
+  - { name: "Fashion",     margin: 0.52 }
+  - { name: "Beauty",      margin: 0.61 }
+  - { name: "Sports",      margin: 0.35 }
+  - { name: "Grocery",     margin: 0.18 }
+
+# ── Campaign objectives (CAMP_007 is retention, which makes the story bite) ─
+campaign_objectives:
+  - { name: "acquisition", weight: 0.25 }
+  - { name: "retention",   weight: 0.30 }
+  - { name: "upsell",      weight: 0.20 }
+  - { name: "winback",     weight: 0.15 }
+  - { name: "engagement",  weight: 0.10 }

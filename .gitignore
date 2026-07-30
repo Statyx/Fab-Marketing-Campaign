@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.ipynb_checkpoints/
+.pytest_cache/
+
+# Node (presentation/)
+node_modules/
+
+# Scratch / logs (terminal capture files used during deploys)
+*.log
+_*.log
+_*.txt
+_*.py
+_*.json
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+
+# Generated dataset — fully reproducible via `python src/generate_data.py` (seed=42).
+# Committing 12k CSV rows + 1.5k text files would bloat every diff for zero benefit.
+data/raw/
+
+# Environment-specific — contain tenant / workspace / item IDs. Use the *.example files as templates.
+src/config.yaml
+src/state.json
+.vscode/mcp.json
+
+# (The *.example files ARE committed: src/config.example.yaml, src/state.example.json, .vscode/mcp.example.json)

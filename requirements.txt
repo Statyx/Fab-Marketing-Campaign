@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+httpx
+azure-identity
+pydantic
+pandas
+numpy
+pyyaml
+requests
+pytest
