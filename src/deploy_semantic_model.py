@@ -147,6 +147,18 @@ def build_model_bim(config, state):
             _col("last_order_at", "dateTime", "Last order", summarize_none=True),
         ],
         "measures": [
+            # Counts live HERE, not on crm_customers: the relationship runs
+            # profile -> customers (many-to-one, one-direction), so slicing by
+            # risk_band cannot filter [Total Customers]. Any visual that groups by
+            # risk_band needs a count that sits on the profile table itself.
+            _measure("Profiled Customers", "COUNTROWS(crm_customer_profile)",
+                     "Contacts with a behavioural profile — countable by risk band",
+                     fmt="#,0", folder="Counts"),
+            _measure("Buyers",
+                     "COALESCE(CALCULATE(COUNTROWS(crm_customer_profile), "
+                     "crm_customer_profile[is_customer] = TRUE()), 0)",
+                     "Contacts with at least one order — the only population churn applies to",
+                     fmt="#,0", folder="Counts"),
             _measure("Avg Churn Score",
                      "CALCULATE(AVERAGE(crm_customer_profile[churn_risk_score]), "
                      "crm_customer_profile[is_customer] = TRUE())",
@@ -306,6 +318,8 @@ def build_model_bim(config, state):
             _col("event_at", "dateTime", "Event timestamp", summarize_none=True),
         ],
         "measures": [
+            _measure("Total Events", "COUNTROWS(marketing_events)",
+                     "All email events — countable by event_type", fmt="#,0", folder="Funnel"),
             _measure("Opens", 'CALCULATE(COUNTROWS(marketing_events), marketing_events[event_type] = "open")',
                      "Email opens", fmt="#,0", folder="Funnel"),
             _measure("Clicks", 'CALCULATE(COUNTROWS(marketing_events), marketing_events[event_type] = "click")',
@@ -394,6 +408,11 @@ def build_model_bim(config, state):
         ],
         "measures": [
             _measure("Units Sold", "SUM(order_lines[quantity])", "Units sold",
+                     fmt="#,0", folder="Commerce"),
+            # [Revenue] lives on orders, which has no relationship to products —
+            # revenue by product category has to be summed from the lines.
+            _measure("Product Revenue", "SUM(order_lines[line_total_eur])",
+                     "Revenue summed from order lines — sliceable by product category",
                      fmt="#,0", folder="Commerce"),
             _measure("Lines per Order", "DIVIDE(COUNTROWS(order_lines), [Total Orders])",
                      "Average lines per order", fmt="#,0.00", folder="Commerce"),

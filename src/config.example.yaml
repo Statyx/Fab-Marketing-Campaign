@@ -36,6 +36,10 @@ storyline:
   culprit_campaign_id: "CAMP_007"
   culprit_campaign_name: "Black Friday Blast"
   victim_segment_id: "SEG_HIGH_VALUE"
+  # Share of the victim segment that actually burns out. Not everyone breaks under the
+  # same pressure — leaving a resilient minority keeps the cohort learnable instead of
+  # making "in SEG_HIGH_VALUE" a perfect predictor of churn.
+  fatigue_share: 0.62
   # Customers in the victim segment who received the culprit campaign get:
   fatigue_send_multiplier: 4.0     # 4x the normal number of sends (the root cause)
   fatigue_unsub_multiplier: 6.0    # unsubscribe rate explodes

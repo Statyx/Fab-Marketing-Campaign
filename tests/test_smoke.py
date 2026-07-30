@@ -247,3 +247,173 @@ def test_attribution_share_is_realistic(data, cfg):
 def test_average_order_value_is_credible(data, cfg):
     aov = data["orders"]["total_amount_eur"].mean()
     assert 30 <= aov <= 600, f"AOV {aov:.0f} EUR is not credible for this scenario"
+
+
+def _burned_cohort(data, cfg):
+    """Customers a demo user can SEE were over-mailed: 2+ sends of the culprit campaign.
+
+    Deliberately reconstructed from marketing_sends rather than from the generator's
+    internal flag — if the burn is not visible in the shipped data, RCA cannot find it.
+    """
+    culprit = cfg["storyline"]["culprit_campaign_id"]
+    hits = data["sends"][data["sends"]["campaign_id"] == culprit].groupby("customer_id").size()
+    return set(hits[hits >= 2].index)
+
+
+def test_over_mailed_cohort_is_measurably_worse(data, cfg):
+    """The burn must show up in churn AND engagement, or the story is decoration."""
+    burned = _burned_cohort(data, cfg)
+    assert len(burned) > 500, f"only {len(burned)} customers were over-mailed — cohort too small"
+    p = data["profile"].set_index("customer_id")
+    inside = p.index.isin(burned)
+    churn_gap = p[inside]["churn_risk_score"].mean() - p[~inside]["churn_risk_score"].mean()
+    eng_gap = p[inside]["engagement_rate"].mean() - p[~inside]["engagement_rate"].mean()
+    assert churn_gap > 3, f"over-mailed customers barely churn more (+{churn_gap:.1f} points)"
+    assert eng_gap < -0.02, f"over-mailed customers are not less engaged ({eng_gap:+.3f})"
+
+
+def test_root_cause_explains_about_half_the_at_risk_cohort(data, cfg):
+    """The demo arc needs RCA to FIND the cause, not be handed it.
+
+    Too low and the campaign is noise; too high and 'at risk' is just a synonym for
+    'received CAMP_007', which makes the diagnosis tautological.
+    """
+    thr = cfg["churn_model"]["at_risk_threshold"]
+    burned = _burned_cohort(data, cfg)
+    risky = set(data["profile"].query("churn_risk_score >= @thr")["customer_id"])
+    share = len(risky & burned) / max(1, len(risky))
+    assert 0.30 <= share <= 0.80, \
+        f"{share:.0%} of the at-risk cohort traces back to the culprit campaign"
+
+
+# ── Report definition (offline structural validation) ───────────
+# Legacy PBIX only. A visual without a prototypeQuery renders as an empty box, and a
+# visual that groups by a column which cannot filter its measure silently renders the
+# same total on every bar. Both are invisible until the demo is live — so they are
+# checked here, before deploy.
+DECORATIVE = {"textbox", "basicShape", "shape", "image", "actionButton"}
+
+
+@pytest.fixture(scope="module")
+def model_bim(cfg):
+    import deploy_semantic_model as dsm
+    return dsm.build_model_bim(cfg, {})
+
+
+@pytest.fixture(scope="module")
+def report_def(cfg):
+    import deploy_report as dr
+    report, pbir, theme_json, theme_name = dr.build_report({}, cfg)
+    return {"report": report, "pbir": pbir, "theme": theme_json, "theme_name": theme_name}
+
+
+@pytest.fixture(scope="module")
+def model_index(model_bim):
+    """{table: {'columns': set, 'measures': set}} plus the filter-propagation graph."""
+    idx = {}
+    for t in model_bim["model"]["tables"]:
+        idx[t["name"]] = {"columns": {c["name"] for c in t.get("columns", [])},
+                          "measures": {m["name"] for m in t.get("measures", [])}}
+    # Single-direction many-to-one: filters flow from the "one" side to the "many" side.
+    flows = {}
+    for r in model_bim["model"]["relationships"]:
+        flows.setdefault(r["toTable"], set()).add(r["fromTable"])
+    return {"tables": idx, "flows": flows}
+
+
+def _visuals(report):
+    for section in report["sections"]:
+        for vc in section["visualContainers"]:
+            yield section["name"], json.loads(vc["config"])["singleVisual"]
+
+
+def test_report_has_pages_and_visuals(report_def):
+    sections = report_def["report"]["sections"]
+    assert len(sections) >= 4, "the demo arc needs one page per step"
+    for s in sections:
+        assert s["visualContainers"], f"page '{s['name']}' is empty"
+
+
+def test_every_data_visual_has_a_prototype_query(report_def):
+    """PBIR/legacy trap: no prototypeQuery == an empty box in Fabric."""
+    for page, sv in _visuals(report_def["report"]):
+        if sv["visualType"] in DECORATIVE:
+            continue
+        pq = sv.get("prototypeQuery")
+        assert pq and pq.get("From") and pq.get("Select"), \
+            f"{page}/{sv['visualType']} has no usable prototypeQuery"
+
+
+def test_report_only_references_existing_model_objects(report_def, model_index):
+    tables = model_index["tables"]
+    for page, sv in _visuals(report_def["report"]):
+        for sel in sv.get("prototypeQuery", {}).get("Select", []):
+            table, prop = sel["Name"].split(".", 1)
+            assert table in tables, f"{page}: unknown table '{table}'"
+            kind = "columns" if "Column" in sel else "measures"
+            assert prop in tables[table][kind], \
+                f"{page}: {table}[{prop}] is not a {kind[:-1]} of the semantic model"
+
+
+def test_report_projections_match_the_query(report_def):
+    """A queryRef with no matching Select silently drops the field from the visual."""
+    for page, sv in _visuals(report_def["report"]):
+        if sv["visualType"] in DECORATIVE:
+            continue
+        names = {s["Name"] for s in sv["prototypeQuery"]["Select"]}
+        for role, refs in sv.get("projections", {}).items():
+            for ref in refs:
+                assert ref["queryRef"] in names, \
+                    f"{page}: projection {role} -> {ref['queryRef']} has no Select entry"
+
+
+def test_report_groupings_respect_filter_direction(report_def, model_index):
+    """The silent killer: grouping by a column that cannot filter the measure.
+
+    Every relationship is many-to-one and single-direction, so crm_customer_profile
+    cannot filter crm_customers, and crm_segments cannot filter marketing_sends.
+    Such a visual does not error — it just repeats the grand total on every category.
+    """
+    flows = model_index["flows"]
+
+    def reaches(src, dst, seen=None):
+        if src == dst:
+            return True
+        seen = seen or set()
+        seen.add(src)
+        return any(n not in seen and reaches(n, dst, seen) for n in flows.get(src, ()))
+
+    for page, sv in _visuals(report_def["report"]):
+        if sv["visualType"] in DECORATIVE:
+            continue
+        cols = [s["Name"].split(".", 1) for s in sv["prototypeQuery"]["Select"] if "Column" in s]
+        measures = [s["Name"].split(".", 1) for s in sv["prototypeQuery"]["Select"] if "Measure" in s]
+        for ctable, ccol in cols:
+            for mtable, mname in measures:
+                assert reaches(ctable, mtable), (
+                    f"{page}: grouping {ctable}[{ccol}] by [{mname}] ({mtable}) — "
+                    f"filters cannot flow that way, every category would show the same total")
+
+
+def test_report_binds_to_the_configured_semantic_model(report_def, cfg):
+    conn = report_def["pbir"]["datasetReference"]["byConnection"]["connectionString"]
+    assert cfg["workspace_name"] in conn
+    assert cfg["semantic_model_name"] in conn
+
+
+def test_report_theme_matches_the_committed_theme_file(report_def):
+    """The theme name must match in three places or Fabric falls back to the default."""
+    name = report_def["theme_name"]
+    report = report_def["report"]
+    assert report["theme"] == name
+    assert json.loads(report["config"])["themeCollection"]["baseTheme"]["name"] == name
+    assert report_def["theme"]["name"] == name
+    assert report_def["theme"]["dataColors"], "theme carries no palette"
+
+
+def test_storyline_is_named_in_the_report(report_def, cfg):
+    """The root-cause page must actually call out the culprit, not just plot it."""
+    text = json.dumps(report_def["report"], ensure_ascii=False)
+    assert cfg["storyline"]["culprit_campaign_name"] in text
+    assert cfg["storyline"]["victim_segment_id"] in text
+
