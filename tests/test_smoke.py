@@ -790,50 +790,55 @@ def reserved(dr):
     return next(iter(dr.RESERVED_REPORT_IDS))
 
 
-def test_reserved_item_is_never_updated_from_state(dr, reserved):
-    """state.json still points at the item another generator owns.
+def test_this_generator_never_publishes_under_the_other_ones_name(dr):
+    """The hole the suffix scheme left open.
+
+    The name used to come from config["report_name"] and was only forked when
+    the *id* in state.json was the reserved one. With a clean state and a lookup
+    that finds nothing -- a first run, or a listing hiccup -- it published under
+    "RPT_Marketing_Churn", the other generator's display name, and the two
+    collided again. Owning a distinct name removes the failure mode instead of
+    detecting it.
+    """
+    for state in ({}, {"report_id": "0000-other"}, {"report_arc_id": None}):
+        _, name = dr.resolve_report_target(state, lambda n: None)
+        assert name == dr.REPORT_NAME
+        assert name != "RPT_Marketing_Churn", "would collide with the other generator"
+
+
+def test_a_reserved_id_leaking_into_state_is_discarded(dr, reserved):
+    """state.json is shared, so the other generator's id can end up under our key.
 
     Two sessions published to the same Fabric report item and overwrote each
-    other for a day. The arbitration gave it to the main checkout; this makes
-    the arbitration mechanical instead of a promise.
+    other for a day. The arbitration gave that item to the main checkout; this
+    makes the arbitration mechanical instead of a promise.
     """
-    rpt_id, name = dr.resolve_report_target(
-        {"report_id": reserved}, "RPT_Marketing_Churn", lambda n: None)
+    rpt_id, name = dr.resolve_report_target({dr.STATE_KEY: reserved}, lambda n: None)
     assert rpt_id != reserved, "would overwrite the item owned by another generator"
-    assert name != "RPT_Marketing_Churn", (
-        "publishing under the same name lets the next run find the reserved item again")
+    assert name == dr.REPORT_NAME
 
 
-def test_reserved_item_is_never_found_back_by_name(dr, reserved):
-    """A fresh state must not re-collide by looking the reserved item up by name."""
-    rpt_id, name = dr.resolve_report_target(
-        {}, "RPT_Marketing_Churn",
-        lambda n: reserved if n == "RPT_Marketing_Churn" else None)
-    assert rpt_id != reserved
-    assert name.endswith(dr.FORK_SUFFIX)
-
-
-def test_own_item_is_reused_not_duplicated(dr, reserved):
-    """Once the fork exists, deploying again updates it instead of piling up items."""
+def test_own_item_is_reused_not_duplicated(dr):
+    """Deploying again updates this generator's item instead of piling up items."""
     assert dr.resolve_report_target(
-        {"report_id": "0000-mine"}, "RPT_Marketing_Churn", lambda n: None) == (
-            "0000-mine", "RPT_Marketing_Churn")
+        {dr.STATE_KEY: "0000-mine"}, lambda n: None) == ("0000-mine", dr.REPORT_NAME)
     assert dr.resolve_report_target(
-        {}, "RPT_Marketing_Churn",
-        lambda n: {"RPT_Marketing_Churn": reserved,
-                   "RPT_Marketing_Churn" + dr.FORK_SUFFIX: "0000-fork"}.get(n)) == (
-            "0000-fork", "RPT_Marketing_Churn" + dr.FORK_SUFFIX)
+        {}, lambda n: "0000-found" if n == dr.REPORT_NAME else None) == (
+            "0000-found", dr.REPORT_NAME)
 
 
-def test_fork_name_does_not_grow_a_second_suffix(dr, reserved):
-    """A name already carrying the suffix must stay stable.
+def test_the_two_generators_do_not_share_a_state_key(dr):
+    """Writing report_id would hand this item to the other generator.
 
-    Without this the item drifts on every run (`_wt`, `_wt_wt`, ...) whenever
-    the stored id is the reserved one, leaving a trail of orphan reports.
+    It reads that key, so the next `deploy_all.py` would update *our* report
+    with *its* definition -- the same overwrite, one indirection further away.
     """
-    forked = "RPT_Marketing_Churn" + dr.FORK_SUFFIX
-    _, name = dr.resolve_report_target({"report_id": reserved}, forked, lambda n: None)
-    assert name == forked, f"suffix applied twice: {name}"
+    import deploy_report
+    other = pathlib.Path(deploy_report.__file__).read_text(encoding="utf-8")
+    mine = pathlib.Path(dr.__file__).read_text(encoding="utf-8")
+    assert dr.STATE_KEY != "report_id"
+    assert f'"{dr.STATE_KEY}"' not in other, "the other generator would follow us into our item"
+    assert 'state["report_id"]' not in mine, "would publish our id under the shared key"
 
 
 # -- Shared model: union, not replace -----------------------------------------

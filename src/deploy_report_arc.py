@@ -69,11 +69,19 @@ PAGE_W, PAGE_H = 1280, 720
 # ── Item ownership ──────────────────────────────────────────────────────────
 # Two generators published to the SAME Fabric report item and silently
 # overwrote each other's work for a full day. Arbitration (Clément, 2026-07-30)
-# gave that item to the main checkout's src/deploy_report.py. An agreement is
-# not a safeguard, so the constraint is encoded here: this generator creates a
-# distinct item rather than updating a reserved one, whatever state.json says.
+# gave that item to the main checkout's src/deploy_report.py.
+#
+# The first fix derived this report's name from config["report_name"] and only
+# forked it when the *id* in state.json was the reserved one. That left a hole:
+# with a clean state and a lookup that finds nothing, it published under
+# "RPT_Marketing_Churn" — the other generator's display name — and the two
+# collided again on the next run.
+#
+# Simpler and airtight: this generator owns its own name outright. Nothing to
+# fork, nothing to share, no way to land on the other item by accident.
+REPORT_NAME = "RPT_Marketing_Churn_Arc"
+STATE_KEY = "report_arc_id"
 RESERVED_REPORT_IDS = {"ace677a4-02a7-4cbf-bc16-8b695fea3c7d"}
-FORK_SUFFIX = "_wt"
 
 # ── Text metrics ────────────────────────────────────────────────────────────
 # A Power BI control clips its content when the box is shorter than the text it
@@ -676,21 +684,17 @@ def validate_fields(report, ws_id, sm_id):
     return broken, len(measures), len(columns)
 
 
-def resolve_report_target(state, rpt_name, lookup):
-    """Choose which item to publish to, never one reserved for another generator.
+def resolve_report_target(state, lookup):
+    """Return (item id or None, name) for this generator's own report item.
 
-    `lookup(name)` returns an item id or None. Returning a *new* name when the
-    stored id is reserved is what stops the next run from finding the reserved
-    item again by name and re-colliding with it.
+    `lookup(name)` returns an item id or None. state.json is shared with the
+    other generator, so this one keeps its id under its own key and discards a
+    reserved id if one ever leaks in.
     """
-    rpt_id = state.get("report_id") or lookup(rpt_name)
-    if rpt_id not in RESERVED_REPORT_IDS:
-        return rpt_id, rpt_name
-    # Idempotent: a name already carrying the suffix must not grow a second one,
-    # or a run whose state was seeded with a reserved id drifts to a new item
-    # every time (`..._wt`, `..._wt_wt`, ...).
-    fork_name = rpt_name if rpt_name.endswith(FORK_SUFFIX) else rpt_name + FORK_SUFFIX
-    return lookup(fork_name), fork_name
+    rpt_id = state.get(STATE_KEY)
+    if rpt_id in RESERVED_REPORT_IDS:
+        rpt_id = None
+    return rpt_id or lookup(REPORT_NAME), REPORT_NAME
 
 
 def main():
@@ -706,9 +710,8 @@ def main():
 
     token = get_fabric_token()
     headers = fabric_headers(token)
-    rpt_name = config["report_name"]
 
-    print_step(1, 1, f"Deploying Report: {rpt_name}")
+    print_step(1, 1, f"Deploying Report: {REPORT_NAME}")
     report, pbir, base_theme, theme = build_report(state, config)
     pages = len(report["sections"])
     visuals = sum(len(s["visualContainers"]) for s in report["sections"])
@@ -738,9 +741,9 @@ def main():
         except RuntimeError:
             return None
 
-    rpt_id, rpt_name = resolve_report_target(state, rpt_name, lookup)
-    if rpt_name != config["report_name"]:
-        print(f"   '{config['report_name']}' is reserved for another generator "
+    rpt_id, rpt_name = resolve_report_target(state, lookup)
+    if state.get(STATE_KEY) in RESERVED_REPORT_IDS:
+        print(f"   {STATE_KEY} points at another generator's item "
               f"— publishing to '{rpt_name}' instead")
 
     if rpt_id:
@@ -764,7 +767,9 @@ def main():
     else:
         raise RuntimeError(f"Deploy failed ({resp.status_code}): {resp.text[:400]}")
 
-    state["report_id"] = rpt_id
+    # Own key: writing report_id would hand this item to the other generator,
+    # which reads that key and would then overwrite it on its next run.
+    state[STATE_KEY] = rpt_id
     save_state(state)
     print(f"\nOK  Report deployed: {rpt_id}")
     print(f"    Pages: {pages} | Visuals: {visuals}")

@@ -462,7 +462,7 @@ before **any** deploy script.
 | **Layout** | no clipped text, no overlapping visuals, nothing off-page, header band tall enough for its own text, cards clear of the header — plus a test that the rule *rejects* the geometry that originally shipped |
 | **Model contract** | deprecated measure aliases still present and hidden, no duplicate measure names |
 | **Shared-model union** | `carry_over_measures_reports_use()` carries over a live measure a report still uses (DAX verbatim, hidden), still drops unused ones, adds nothing it already defines, refuses when the expression cannot be recovered, and never fails the deploy on an API outage — mutation-tested (neutralising it turns two red) |
-| **Item ownership** | this generator refuses to publish to a report item reserved for another generator, and renames so the next run cannot find it back by name |
+| **Item ownership** | the arc generator owns its own report name *and* its own `state.json` key, so it can never land on the other generator's item and never hands it ours — mutation-tested (sharing either one turns a test red) |
 
 The report tests build the report and the model **in memory** and cross-check them against each
 other. A visual referencing a measure that no longer exists, or grouping across a relationship

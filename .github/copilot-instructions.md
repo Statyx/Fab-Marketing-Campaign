@@ -53,9 +53,10 @@ One command: `python deploy_all.py` (idempotent, tenant-guarded).
 ## Inherited lessons — do not relearn these
 - **One Fabric item has ONE owning generator.** Two sessions published to report
   `ace677a4-02a7-4cbf-bc16-8b695fea3c7d` and silently overwrote each other for a day. Arbitration
-  gave it to the main checkout's `src/deploy_report.py`; `RESERVED_REPORT_IDS` in this branch's
-  generator enforces it mechanically (it forks to a distinct item instead of updating). Before
-  publishing to any existing item, check who else deploys to it.
+  gave it to the main checkout's `src/deploy_report.py`. `src/deploy_report_arc.py` therefore owns
+  a **distinct display name** (`REPORT_NAME`) *and* a **distinct `state.json` key** (`STATE_KEY`) —
+  sharing either one is enough to collide, and a name-based guard that only checks the *id* leaves
+  a hole on a first run. Before publishing to any existing item, check who else deploys to it.
 - **Data Agent must be DUAL-SOURCE**: ontology (GQL) for relationships/RCA/impact, semantic model
   (DAX) for every number. The Fabric IQ ontology TimeSeries/measure path returns empty for value
   questions — proven twice on sister projects. Route explicitly in `aiInstructions`.
