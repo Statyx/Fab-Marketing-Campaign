@@ -824,6 +824,17 @@ def test_own_item_is_reused_not_duplicated(dr, reserved):
             "0000-fork", "RPT_Marketing_Churn" + dr.FORK_SUFFIX)
 
 
+def test_fork_name_does_not_grow_a_second_suffix(dr, reserved):
+    """A name already carrying the suffix must stay stable.
+
+    Without this the item drifts on every run (`_wt`, `_wt_wt`, ...) whenever
+    the stored id is the reserved one, leaving a trail of orphan reports.
+    """
+    forked = "RPT_Marketing_Churn" + dr.FORK_SUFFIX
+    _, name = dr.resolve_report_target({"report_id": reserved}, forked, lambda n: None)
+    assert name == forked, f"suffix applied twice: {name}"
+
+
 # -- Breaking-change guard ---------------------------------------------------
 
 @pytest.fixture(scope="module")

@@ -686,7 +686,10 @@ def resolve_report_target(state, rpt_name, lookup):
     rpt_id = state.get("report_id") or lookup(rpt_name)
     if rpt_id not in RESERVED_REPORT_IDS:
         return rpt_id, rpt_name
-    fork_name = rpt_name + FORK_SUFFIX
+    # Idempotent: a name already carrying the suffix must not grow a second one,
+    # or a run whose state was seeded with a reserved id drifts to a new item
+    # every time (`..._wt`, `..._wt_wt`, ...).
+    fork_name = rpt_name if rpt_name.endswith(FORK_SUFFIX) else rpt_name + FORK_SUFFIX
     return lookup(fork_name), fork_name
 
 
