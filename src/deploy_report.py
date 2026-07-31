@@ -48,6 +48,7 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 import json
+import math
 import re
 from pathlib import Path
 
@@ -129,7 +130,7 @@ def _card(name, x, y, w, h, table, measure, accent, title, z=1):
         "drillFilterOtherVisuals": True,
         "objects": {
             "outline": [{"properties": {"show": _lit("false")}}],
-            "calloutValue": [{"properties": {"fontSize": _lit("24D"), "bold": _lit("true"),
+            "calloutValue": [{"properties": {"fontSize": _lit(f"{CARD_VALUE_PT}D"), "bold": _lit("true"),
                                              "color": _solid(accent)}}],
             # Off on purpose. It renders the raw measure name in English
             # ("Sends per Customer") directly under the French title that already
@@ -138,7 +139,7 @@ def _card(name, x, y, w, h, table, measure, accent, title, z=1):
             "categoryLabel": [{"properties": {"show": _lit("false")}}],
         },
         "vcObjects": {
-            "title": _vc_title(title, color="#605E5C", size="11D"),
+            "title": _vc_title(title, color="#605E5C", size=f"{CARD_TITLE_PT}D"),
             "visualHeader": [{"properties": {"show": _lit("false")}}],
             "visualHeaderTooltip": [{"properties": {"show": _lit("false")}}],
             "background": [{"properties": {"show": _lit("true")}}],
@@ -346,9 +347,42 @@ TEXT_PAD = 8.0
 CARD_CHROME = 24.0
 
 
+def line_px(pt, lines=1):
+    """The proportional part of a text box: glyph line boxes, no padding."""
+    return pt * PX_PER_PT * LINE_BOX * lines
+
+
 def _text_height(pt, lines=1):
     """Minimum box height, in px, for `lines` lines of `pt`-point text."""
-    return pt * PX_PER_PT * LINE_BOX * lines + TEXT_PAD
+    return line_px(pt, lines) + TEXT_PAD
+
+
+# Public alias: the two terms must stay separable, because folding the padding
+# into the multiplier under-sizes small text and over-sizes large text.
+text_height = _text_height
+TEXTBOX_PAD = TEXT_PAD
+
+
+def card_height(*font_pts):
+    """Minimum cardVisual height for the stack of texts it renders.
+
+    Each stacked text keeps its own padding — see CARD_CHROME above for the
+    render that disproved the collapsed-padding model.
+    """
+    return int(math.ceil(sum(_text_height(p) for p in font_pts) + CARD_CHROME))
+
+
+# ── Page geometry ──────────────────────────────────────────────────────────
+# Named so the layout tests can assert the header actually contains its text
+# instead of re-deriving magic numbers that could drift from the call sites.
+HEADER_H = 80             # full band height
+HEADER_PAD_TOP = 6
+HEADER_TITLE_PT, HEADER_TITLE_H = 17, 42
+HEADER_SUB_Y, HEADER_SUB_PT, HEADER_SUB_H = 50, 10, 26
+HEADER_PAD_BOTTOM = 4     # 6 + 42 + 26 = 74, band is 80
+
+CARD_TITLE_PT, CARD_VALUE_PT, CARD_LABEL_PT = 11, 24, 9
+CARD_Y, CARD_H = 88, 112  # card_height(11, 24) = 103, so 9px of margin
 
 
 def _font_pt(objects, group, default):
@@ -465,9 +499,11 @@ def build_report(state, config):
         # pt * (96/72) * 1.35 + 8px or Power BI clips the glyphs — it never
         # shrinks the font and never warns.
         return [
-            _band(f"{prefix}_band", 0, 0, CANVAS_W, 80, accent),
-            _textbox(f"{prefix}_t", 28, 6, 1100, 42, title, "17pt", "#FFFFFF"),
-            _textbox(f"{prefix}_s", 28, 50, 1100, 26, subtitle, "10pt", "#F3F2F1"),
+            _band(f"{prefix}_band", 0, 0, CANVAS_W, HEADER_H, accent),
+            _textbox(f"{prefix}_t", 28, HEADER_PAD_TOP, 1100, HEADER_TITLE_H,
+                     title, f"{HEADER_TITLE_PT}pt", "#FFFFFF"),
+            _textbox(f"{prefix}_s", 28, HEADER_SUB_Y, 1100, HEADER_SUB_H,
+                     subtitle, f"{HEADER_SUB_PT}pt", "#F3F2F1"),
         ]
 
     # ── Page 1 — Direction : la valeur du portefeuille et son exposition ──

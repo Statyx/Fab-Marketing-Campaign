@@ -535,8 +535,12 @@ def model_bim(cfg):
 
 @pytest.fixture(scope="module")
 def report_def(cfg):
-    import deploy_report_arc as dr
-    report, pbir, theme_json, theme_name = dr.build_report({}, cfg)
+    import deploy_report as dr
+    # build_report binds the report to a live semantic model id; the geometry
+    # under test does not depend on its value, so a placeholder keeps the suite
+    # offline.
+    state = {"semantic_model_id": "00000000-0000-0000-0000-000000000000"}
+    report, pbir, theme_json, theme_name = dr.build_report(state, cfg)
     return {"report": report, "pbir": pbir, "theme": theme_json, "theme_name": theme_name}
 
 
@@ -658,14 +662,14 @@ def test_storyline_is_named_in_the_report(report_def, cfg):
 # before a human sees the report.
 
 def test_report_layout_has_no_clipping_or_overlap(report_def):
-    import deploy_report_arc as dr
+    import deploy_report as dr
     problems = dr.validate_layout(report_def["report"])
     assert not problems, "layout defects:\n  " + "\n  ".join(problems)
 
 
 def test_textbox_height_rule_rejects_a_too_small_box():
     """Guard the guard: the rule must actually fail on the geometry that shipped."""
-    import deploy_report_arc as dr
+    import deploy_report as dr
     assert dr.text_height(17) > 30, "17pt in a 30px box must be rejected"
     assert dr.text_height(10) > 20, "10pt in a 20px box must be rejected"
 
@@ -676,7 +680,7 @@ def test_height_model_keeps_padding_separate_from_line_height():
     Folding padding into a multiplier under-sizes small text and over-sizes
     large text — that is how a 10pt subtitle got a 22px box when it needs 26.
     """
-    import deploy_report_arc as dr
+    import deploy_report as dr
     # doubling the font must NOT double the required height: padding is constant
     assert dr.text_height(20) < 2 * dr.text_height(10)
     # the proportional part alone must scale linearly
@@ -688,36 +692,37 @@ def test_the_card_stack_that_clipped_on_screen_is_rejected():
 
     A 112px card holding title 11pt + callout 24pt + label 9pt shipped to Fabric
     and rendered with its bottom label cut off. The model in force at the time
-    computed 112px and passed it. Whatever the constants become, that stack must
-    never fit 112px again — this is evidence, not a derivation.
+    computed 111.2px and passed it. Whatever the constants become, that stack
+    must never fit 112px again — this is evidence, not a derivation.
     """
     import deploy_report as dr
-    import deploy_report_arc as arc
 
-    assert arc.card_height(11, 24, 9) > 112, (
+    assert dr.card_height(11, 24, 9) > 112, (
         "the stack observed clipped in Fabric must not fit a 112px card")
 
-    need = (dr._text_height(11) + dr._text_height(24)
-            + dr._text_height(9) + dr.CARD_CHROME)
-    assert need > 112, "same stack, same verdict required in deploy_report"
+    # The card that actually ships drops the redundant label, and fits.
+    assert dr.card_height(dr.CARD_TITLE_PT, dr.CARD_VALUE_PT) <= dr.CARD_H
 
 
-def test_both_generators_size_a_card_identically():
-    """Two generators disagreeing on the fit is how one of them ships clipped."""
+def test_padding_is_charged_per_stacked_text_not_once():
+    """The exact mistake the render disproved.
+
+    Collapsing the three per-block pads into a single container pad is what
+    made a 112px box look sufficient. Adding a text must cost its own padding,
+    so the stack must grow by more than the glyph height alone.
+    """
     import deploy_report as dr
-    import deploy_report_arc as arc
 
-    for pts in [(11, 24), (11, 24, 9), (11, 30, 9), (12, 20)]:
-        mine = dr._text_height(pts[0]) + dr._text_height(pts[1]) + dr.CARD_CHROME
-        if len(pts) == 3:
-            mine += dr._text_height(pts[2])
-        assert abs(mine - arc.card_height(*pts)) <= 1, (
-            f"{pts}: deploy_report says {mine:.1f}px, arc says {arc.card_height(*pts)}px")
+    two = dr.card_height(11, 24)
+    three = dr.card_height(11, 24, 9)
+    assert three - two >= dr.line_px(9) + dr.TEXT_PAD - 1, (
+        f"a third text must cost its line box AND its own padding: "
+        f"grew by {three - two}px, needs {dr.line_px(9) + dr.TEXT_PAD:.1f}px")
 
 
 def test_a_hidden_label_is_not_charged_for_space():
     """show:false frees its line — but only when it is explicitly off."""
-    import deploy_report_arc as arc
+    import deploy_report as arc
 
     off = {"categoryLabel": [{"properties": {"show": {"expr": {"Literal": {"Value": "false"}}}}}]}
     assert not arc._shown(off, "categoryLabel")
@@ -727,7 +732,7 @@ def test_a_hidden_label_is_not_charged_for_space():
 
 
 def test_every_card_is_tall_enough_for_what_it_actually_renders(report_def):
-    import deploy_report_arc as dr
+    import deploy_report as dr
     seen = 0
     for section in report_def["report"]["sections"]:
         for vc in section["visualContainers"]:
@@ -736,11 +741,10 @@ def test_every_card_is_tall_enough_for_what_it_actually_renders(report_def):
                 continue
             seen += 1
             objs = sv.get("objects", {})
-            stack = [dr._font_pt(sv.get("vcObjects", {}), "title"),
-                     dr._font_pt(objs, "calloutValue")]
+            stack = [dr._font_pt(sv.get("vcObjects", {}), "title", dr.CARD_TITLE_PT),
+                     dr._font_pt(objs, "calloutValue", dr.CARD_VALUE_PT)]
             if dr._shown(objs, "categoryLabel"):
                 stack.append(dr._font_pt(objs, "categoryLabel", dr.CARD_LABEL_PT))
-            stack = [p for p in stack if p]
             assert vc["height"] >= dr.card_height(*stack), (
                 f"card {vc['height']}px too short for {stack}")
     assert seen == 20, f"expected 20 cards, found {seen}"
@@ -749,7 +753,7 @@ def test_every_card_is_tall_enough_for_what_it_actually_renders(report_def):
 def test_cards_do_not_repeat_their_title_in_english(report_def):
     """The label under the value was the raw measure name, duplicating the
     French title above it — and it was the line that got clipped."""
-    import deploy_report_arc as dr
+    import deploy_report as dr
     for section in report_def["report"]["sections"]:
         for vc in section["visualContainers"]:
             sv = json.loads(vc["config"])["singleVisual"]
@@ -763,10 +767,12 @@ def test_validator_detects_the_geometry_that_shipped(report_def):
     """Regression harness: re-inject the original geometry and count the defects.
 
     32 = 4 pages x (title + subtitle clipped + their overlap) + 20 cards whose
-    category label was cut off by the 30pt callout.
+    category label was cut off by the 30pt callout. The label is switched back
+    on here because that is what actually shipped — a card sized for two texts
+    while rendering three is the whole defect.
     """
     import copy
-    import deploy_report_arc as dr
+    import deploy_report as dr
     old = copy.deepcopy(report_def["report"])
     for s in old["sections"]:
         for v in s["visualContainers"]:
@@ -783,17 +789,19 @@ def test_validator_detects_the_geometry_that_shipped(report_def):
                 v["y"], v["height"] = 78, 112
                 (sv["objects"]["calloutValue"][0]["properties"]
                  ["fontSize"]["expr"]["Literal"]["Value"]) = "30D"
+                (sv["objects"]["categoryLabel"][0]["properties"]
+                 ["show"]["expr"]["Literal"]["Value"]) = "true"
                 v["config"] = json.dumps(c)
     problems = dr.validate_layout(old)
     assert len(problems) == 32, f"expected 32 defects, got {len(problems)}"
-    assert sum("card is" in p for p in problems) == 20
-    assert sum("overlaps" in p for p in problems) == 4
-    assert sum("text will be clipped" in p for p in problems) == 8
+    assert sum("card stack clipped" in p for p in problems) == 20
+    assert sum("overlap" in p for p in problems) == 4
+    assert sum(("text clipped" in p) for p in problems) == 8
 
 
 def test_header_band_is_not_counted_as_an_overlap(report_def):
     """The z=0 band sits under its own text on purpose — 4 false positives/page."""
-    import deploy_report_arc as dr
+    import deploy_report as dr
     bands = [vc for s in report_def["report"]["sections"]
              for vc in s["visualContainers"]
              if json.loads(vc["config"])["singleVisual"]["visualType"] == "basicShape"]
@@ -804,7 +812,7 @@ def test_header_band_is_not_counted_as_an_overlap(report_def):
 
 def test_header_band_contains_its_text(report_def):
     """The banner must be tall enough for the title and subtitle stacked inside it."""
-    import deploy_report_arc as dr
+    import deploy_report as dr
     assert dr.HEADER_H >= (dr.HEADER_PAD_TOP + dr.HEADER_TITLE_H
                            + dr.HEADER_SUB_H + dr.HEADER_PAD_BOTTOM)
     for section in report_def["report"]["sections"]:
@@ -820,7 +828,7 @@ def test_header_band_contains_its_text(report_def):
 
 
 def test_cards_start_below_the_header(report_def):
-    import deploy_report_arc as dr
+    import deploy_report as dr
     for section in report_def["report"]["sections"]:
         for vc in section["visualContainers"]:
             sv = json.loads(vc["config"])["singleVisual"]
@@ -857,66 +865,30 @@ def test_no_duplicate_measure_names(model_bim):
 
 # -- Item ownership ----------------------------------------------------------
 
-@pytest.fixture(scope="module")
-def dr():
-    import deploy_report_arc
-    return deploy_report_arc
+def test_there_is_exactly_one_report_generator():
+    """Two sessions once published to the same Fabric report item and silently
+    overwrote each other for a day. The fix that held was not a better guard,
+    it was having a single owner.
 
-
-@pytest.fixture(scope="module")
-def reserved(dr):
-    return next(iter(dr.RESERVED_REPORT_IDS))
-
-
-def test_this_generator_never_publishes_under_the_other_ones_name(dr):
-    """The hole the suffix scheme left open.
-
-    The name used to come from config["report_name"] and was only forked when
-    the *id* in state.json was the reserved one. With a clean state and a lookup
-    that finds nothing -- a first run, or a listing hiccup -- it published under
-    "RPT_Marketing_Churn", the other generator's display name, and the two
-    collided again. Owning a distinct name removes the failure mode instead of
-    detecting it.
+    A second generator is allowed to exist -- but adding one must be a decision,
+    not something that appears in a merge. If this fails, give the new file its
+    own display name AND its own state.json key before deleting this assertion:
+    sharing either one is enough to collide.
     """
-    for state in ({}, {"report_id": "0000-other"}, {"report_arc_id": None}):
-        _, name = dr.resolve_report_target(state, lambda n: None)
-        assert name == dr.REPORT_NAME
-        assert name != "RPT_Marketing_Churn", "would collide with the other generator"
+    src = pathlib.Path(__file__).resolve().parents[1] / "src"
+    generators = sorted(p.name for p in src.glob("deploy_report*.py")
+                        if not p.name.startswith("validate"))
+    assert generators == ["deploy_report.py"], (
+        f"found {generators}; a second report generator needs its own name and "
+        f"state key, and docs/ARCHITECTURE.md must describe it")
 
 
-def test_a_reserved_id_leaking_into_state_is_discarded(dr, reserved):
-    """state.json is shared, so the other generator's id can end up under our key.
-
-    Two sessions published to the same Fabric report item and overwrote each
-    other for a day. The arbitration gave that item to the main checkout; this
-    makes the arbitration mechanical instead of a promise.
-    """
-    rpt_id, name = dr.resolve_report_target({dr.STATE_KEY: reserved}, lambda n: None)
-    assert rpt_id != reserved, "would overwrite the item owned by another generator"
-    assert name == dr.REPORT_NAME
-
-
-def test_own_item_is_reused_not_duplicated(dr):
-    """Deploying again updates this generator's item instead of piling up items."""
-    assert dr.resolve_report_target(
-        {dr.STATE_KEY: "0000-mine"}, lambda n: None) == ("0000-mine", dr.REPORT_NAME)
-    assert dr.resolve_report_target(
-        {}, lambda n: "0000-found" if n == dr.REPORT_NAME else None) == (
-            "0000-found", dr.REPORT_NAME)
-
-
-def test_the_two_generators_do_not_share_a_state_key(dr):
-    """Writing report_id would hand this item to the other generator.
-
-    It reads that key, so the next `deploy_all.py` would update *our* report
-    with *its* definition -- the same overwrite, one indirection further away.
-    """
+def test_the_report_is_addressed_by_one_state_key():
     import deploy_report
-    other = pathlib.Path(deploy_report.__file__).read_text(encoding="utf-8")
-    mine = pathlib.Path(dr.__file__).read_text(encoding="utf-8")
-    assert dr.STATE_KEY != "report_id"
-    assert f'"{dr.STATE_KEY}"' not in other, "the other generator would follow us into our item"
-    assert 'state["report_id"]' not in mine, "would publish our id under the shared key"
+    src = pathlib.Path(deploy_report.__file__).read_text(encoding="utf-8")
+    assert 'state["report_id"]' in src or 'state.get("report_id")' in src, (
+        "the canonical report must stay addressed by report_id")
+
 
 
 # -- Shared model: union, not replace -----------------------------------------
@@ -1038,9 +1010,9 @@ def test_readback_parses_the_dax_not_just_the_name(dsm, monkeypatch):
 
 def test_every_fabric_entrypoint_pins_the_tenant():
     import inspect
-    import deploy_all, deploy_report, deploy_report_arc, validate_report
+    import deploy_all, deploy_report, validate_report
 
-    for mod in (deploy_all, deploy_report, deploy_report_arc, validate_report):
+    for mod in (deploy_all, deploy_report, validate_report):
         src = inspect.getsource(mod.main)
         assert "ensure_tenant" in src, (
             f"{mod.__name__}.main() must pin the az subscription before "

@@ -52,11 +52,16 @@ One command: `python deploy_all.py` (idempotent, tenant-guarded).
 
 ## Inherited lessons — do not relearn these
 - **One Fabric item has ONE owning generator.** Two sessions published to report
-  `ace677a4-02a7-4cbf-bc16-8b695fea3c7d` and silently overwrote each other for a day. Arbitration
-  gave it to the main checkout's `src/deploy_report.py`. `src/deploy_report_arc.py` therefore owns
-  a **distinct display name** (`REPORT_NAME`) *and* a **distinct `state.json` key** (`STATE_KEY`) —
-  sharing either one is enough to collide, and a name-based guard that only checks the *id* leaves
-  a hole on a first run. Before publishing to any existing item, check who else deploys to it.
+  `ace677a4-02a7-4cbf-bc16-8b695fea3c7d` and silently overwrote each other for a day. The fix that
+  held was not a better guard, it was **a single owner**: `src/deploy_report.py`, and the second
+  generator was deleted. `test_there_is_exactly_one_report_generator` fails if a `deploy_report*.py`
+  reappears — adding one must be a decision, not something that shows up in a merge. If you do add
+  one, give it a **distinct display name** *and* a **distinct `state.json` key**: sharing either is
+  enough to collide, and a guard that only checks the *id* leaves a hole on a first run.
+  **Deleting a generator can silently delete its tests.** The layout suite was written against the
+  arc module, so removing the file would have taken the entire clipping protection with it while
+  the gate stayed green. Port the tests onto the survivor *first*, and prove the refactor is
+  output-neutral by hashing the built report before and after.
 - **Data Agent must be DUAL-SOURCE**: ontology (GQL) for relationships/RCA/impact, semantic model
   (DAX) for every number. The Fabric IQ ontology TimeSeries/measure path returns empty for value
   questions — proven twice on sister projects. Route explicitly in `aiInstructions`.
@@ -113,7 +118,7 @@ One command: `python deploy_all.py` (idempotent, tenant-guarded).
   got its content rewritten. Before believing any Fabric failure, check
   `az account show --query tenantId` against `config.yaml → tenant_id`.
   The guard is `helpers.ensure_tenant(cfg)`, called from **every** entrypoint's `main()`
-  (`deploy_all`, `deploy_report`, `deploy_report_arc`, `validate_report`) — there is a test that
+  (`deploy_all`, `deploy_report`, `validate_report`) — there is a test that
   fails if a new one forgets. One shared implementation, so it cannot drift between scripts.
 - Capacity pauses when idle → resume before deploy/demo.
 - Never use `az rest` from a Python subprocess (hangs). Use `requests` + `az account get-access-token`.

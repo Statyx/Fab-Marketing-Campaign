@@ -273,14 +273,17 @@ item and triggers `RefreshGraph` to ingest.
 **Legacy PBIX format only** (`report.json` with `sections[].visualContainers[]`). PBIR renders
 blank in Fabric. Every visual carries a `prototypeQuery`; without one it is an empty box.
 
-4 pages, 46 visuals, one page per step of the arc:
+4 pages, 46 visuals — one per persona, each answering that persona's question:
 
 | Page | Accent | Question it answers |
 |---|---|---|
-| 1 · Détection | `#00008F` | who is at risk, how much money is exposed, where the base sits in its lifecycle |
-| 2 · Cause racine | `#863C41` | pressure per campaign, unsubscribes per campaign, open-rate collapse |
-| 3 · Quantification | `#896610` | revenue, orders, basket, product mix, cohort table by risk band |
-| 4 · Action | `#027180` | reachable base, support friction, segment to throttle, customers to work |
+| Direction | `#00008F` | portfolio value, churn exposure, health of the customer relationship |
+| Retention | `#027180` | which buyers score ≥ 65/100 — recency, engagement, unsubscribe, support friction |
+| Marketing | `#896610` | email pressure per campaign: "Black Friday Blast" over-mails `SEG_HIGH_VALUE` |
+| Commerce | `#863C41` | revenue, average basket, campaign contribution, product returns |
+
+Read in order they walk the storyline end to end — Direction sees the exposure, Retention names
+the cohort, Marketing finds the cause, Commerce quantifies the damage.
 
 Visual conventions carried over from the sister demos:
 
@@ -304,8 +307,8 @@ The height model has **two terms, and conflating them is what makes estimates wr
 
 - **line height is proportional** to the font — 1pt = 4/3 px at 96 DPI, line box ≈1.35 × em,
   so **1.8 px per pt**;
-- **padding / chrome is constant** and depends on the control, not the font — ≈8px for a
-  textbox, ≈32px for a card.
+- **padding is constant** and depends on the control, not the font — ≈8px per text element,
+  plus ≈24px of card chrome (border, spacing, rounded corners).
 
 A single "px per pt" multiplier cannot express a constant term: it under-sizes small text and
 over-sizes large text. A first attempt used `height >= pt * 2.2`, which passed a 10pt subtitle in
@@ -313,28 +316,43 @@ a 22px box that actually needs 26px. Keep the terms separate:
 
 ```python
 line_px(pt)        = pt * 1.8
-text_height(pt)    = ceil(line_px(pt) + 8)          # textbox
-card_height(*pts)  = ceil(sum(line_px(p)) + 32)     # cardVisual stacks 3 texts
+text_height(pt)    = ceil(line_px(pt) + 8)               # one text element
+card_height(*pts)  = ceil(sum(text_height(p)) + 24)      # a card stacks several
 ```
 
-> **These three constants are derived, not measured.** Nothing has ever been compared against the
-> Power BI renderer; the only evidence is that a header and a card sized this way were inspected
-> visually and looked right. The two generators independently derived **24** and **32** for the card
-> chrome — an 8px disagreement neither could settle. This project takes the larger one, because
-> over-reserving costs nothing here while under-reserving is precisely the defect that shipped.
-> Do not restate them as verified.
+> **Each stacked text keeps its own padding — and this one *is* measured.** An earlier model
+> collapsed the three per-block pads into a single container pad
+> (`sum(line_px) + 8 + 24`, i.e. `sum(pt) * 1.8 + 32`). Under it, a 112px card holding
+> 11 + 24 + 9 pt computed **111.2px and passed** — then shipped to Fabric and **rendered with its
+> bottom label clipped on screen**. A render outranks a derivation, so the pads no longer collapse:
+> the same stack now needs 128px and is correctly rejected.
+> `test_the_card_stack_that_clipped_on_screen_is_rejected` locks that observation.
+>
+> The **1.8**, **8** and **24** themselves are still derived, not measured. Do not restate them as
+> verified; re-check visually whenever a font size changes, and treat a passing validator as
+> necessary, not sufficient.
 
 | Element | Font(s) | Needs | Box |
 |---|---|---|---|
 | Page title | 17pt | 39px | 42 |
 | Page subtitle | 10pt | 26px | 26 |
 | Header band | — | 74px | 80 |
-| KPI card | 11 + **24** + 9pt | 112px | 112 |
+| KPI card (shipped) | 11 + **24**pt | 103px | 112 |
+| KPI card (with label) | 11 + 24 + 9pt | 128px | ✗ clips |
 
-**A card is not one line.** It stacks `vcObjects.title` (11pt), `calloutValue` and
-`categoryLabel` (9pt). With a 30pt callout the stack needs 122px in a 112px box, so the category
-label was clipped on **all 20 cards**. The vertical grid has no 10px to give, so the fix is the
-font — callout 30pt → 24pt — not the box. Shrinking the box instead makes it worse.
+**A card is not one line, and the cheapest fix is upstream of the geometry.** It stacks
+`vcObjects.title` (11pt), `calloutValue` and `categoryLabel` (9pt). Two things were wrong at once:
+a 30pt callout, and a category label rendering the **raw English measure name** ("Sends per
+Customer") directly under a **French title that already said it** ("Emails / Client").
+
+Dropping the callout to 24pt was not enough — 11 + 24 + 9 still needs 128px in a 112px box. The
+label is therefore `show: false`: it was duplicated content *and* the clipped line. Two texts fit
+where three did not, with 9px to spare. The vertical grid rarely has 10 spare pixels, but a page
+almost always has a redundant label.
+
+Consequence for the validator: it must model what is **rendered**, not what is declared. It reads
+`show`, and treats an **absent** group as visible — that is Power BI's default, and inferring
+"hidden" from a missing `fontSize` would under-reserve.
 
 `validate_layout(report)` **blocks the deploy** on four defect classes: out-of-page bounds, text
 too large for its box, **card stacks too tall for their card**, and overlapping visuals.

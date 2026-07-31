@@ -155,8 +155,7 @@ src/deploy_all.py             — orchestrator (strict order, resumable, tenant-
 src/deploy_semantic_model.py  — Direct Lake model: 12 tables / 11 relationships / 50 measures
 src/deploy_ontology.py        — 8 entities / 9 relationships (Fabric IQ)
 src/deploy_graph.py           — graph definition + RefreshGraph
-src/deploy_report.py          — Power BI report, 4 persona pages (legacy PBIX) — publishes RPT_Marketing_Churn
-src/deploy_report_arc.py      — second generator, 4 narrative-arc pages + layout/field validators
+src/deploy_report.py          — Power BI report, 4 persona pages (legacy PBIX) + layout/field validators
 src/validate_report.py        — replays every visual's prototypeQuery in DAX (proves none render blank)
 src/build_taskflow.py         — generates the workspace task flow JSON from config.yaml
 src/deploy_data_agent.py      — dual-source agent (ontology GQL + semantic model DAX)
