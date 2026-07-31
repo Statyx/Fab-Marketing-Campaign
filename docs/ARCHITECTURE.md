@@ -337,18 +337,25 @@ card_height(*pts)  = ceil(sum(text_height(p)) + 24)      # a card stacks several
 | Page title | 17pt | 39px | 42 |
 | Page subtitle | 10pt | 26px | 26 |
 | Header band | — | 74px | 80 |
-| KPI card (shipped) | 11 + **24**pt | 103px | 112 |
-| KPI card (with label) | 11 + 24 + 9pt | 128px | ✗ clips |
+| KPI card (shipped) | 11 + **24** + 9pt | 128px | 128 |
 
-**A card is not one line, and the cheapest fix is upstream of the geometry.** It stacks
-`vcObjects.title` (11pt), `calloutValue` and `categoryLabel` (9pt). Two things were wrong at once:
-a 30pt callout, and a category label rendering the **raw English measure name** ("Sends per
-Customer") directly under a **French title that already said it** ("Emails / Client").
+**A card is not one line, and a hide toggle is not a fitting strategy.** It stacks
+`vcObjects.title` (11pt), `calloutValue` (24pt) and `categoryLabel` (9pt) — three texts, 128px.
 
-Dropping the callout to 24pt was not enough — 11 + 24 + 9 still needs 128px in a 112px box. The
-label is therefore `show: false`: it was duplicated content *and* the clipped line. Two texts fit
-where three did not, with 9px to spare. The vertical grid rarely has 10 spare pixels, but a page
-almost always has a redundant label.
+The label was previously declared `show: false` to make the stack fit 112px. **Power BI ignored
+the declaration.** The definition read back from Fabric still carried `show: false` on all 20
+cards, and the renderer drew the label anyway — clipped, because the box was sized for two texts.
+The validator was not wrong; it believed a declaration the engine did not honour.
+
+The card is therefore sized for **everything it declares**, whatever `show` says: 128px for 128px
+needed. That cost 16px the row grid did not have, so the grid moved with it — cards now end at
+y=216, content row 1 shifted 208 → 224 and shrank 242 → 226 to keep its bottom edge at 450. Row 2
+is untouched. All 34 call sites read `CARD_Y/CARD_H/ROW1_Y/ROW1_H/ROW2_Y/ROW2_H`; none repeats a
+literal, because the constants already existed while the call sites still hard-coded 88/112.
+
+Two tests hold the line, both mutation-verified:
+`test_a_card_fits_even_if_power_bi_ignores_show_false` (sizes the stack ignoring `show`) and
+`test_the_category_label_is_declared_visible` (a requirement met only by a renderer bug is not met).
 
 Consequence for the validator: it must model what is **rendered**, not what is declared. It reads
 `show`, and treats an **absent** group as visible — that is Power BI's default, and inferring

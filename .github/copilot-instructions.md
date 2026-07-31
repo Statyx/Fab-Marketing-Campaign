@@ -82,15 +82,22 @@ One command: `python deploy_all.py` (idempotent, tenant-guarded).
   **The one constant with evidence behind it is that stack; 1.35, 8 and 24 are still calculated.**
   Re-check visually when a font size changes, and treat a passing validator as necessary, not
   sufficient.
-  Before growing a card, ask what the third text is *for*: ours rendered the raw English measure
-  name under a French title that already said it. `show: false` on `categoryLabel` removed
-  duplicated content and dropped the need to 103px in the same 112px box — the row grid rarely has
-  10 spare pixels, but it always has a redundant label to spare.
+  **`show: false` is a request, not a guarantee — Power BI ignored ours.** All 20 cards shipped
+  with `objects.categoryLabel.show = false`; the definition read back from Fabric still carried it,
+  and the renderer drew the label anyway, clipped, because the box had been sized for two texts.
+  The validator was not wrong — it believed a declaration the engine did not honour. So **never let
+  a hide toggle be what makes a box fit**: size for every text the visual declares, and treat the
+  saved space as a bonus if the toggle happens to work. `test_a_card_fits_even_if_power_bi_ignores_show_false`
+  computes the stack ignoring `show` entirely; `test_the_category_label_is_declared_visible` keeps
+  the label on, because satisfying a requirement by relying on a renderer bug is not satisfying it.
   A validator must model what is **rendered**, not what is declared: read `show`, and treat an
   absent group as **visible** (that is Power BI's default). Inferring "hidden" from a missing
   `fontSize` under-reserves.
-  **Both report generators must return the same number for the same stack** — there is a test for
-  it. Two generators disagreeing on the fit is how one of them ships clipped.
+  Growing the card is then a **grid** change, not a card change: 112 → 128 pushed the cards from
+  y=88..200 to y=88..216, so content row 1 had to move 208 → 224 and shrink 242 → 226 to keep its
+  bottom at 450. Bind the call sites to `CARD_Y/CARD_H/ROW1_Y/ROW1_H/ROW2_Y/ROW2_H` rather than
+  repeating literals 34 times — the constants existed while the call sites still hard-coded 88/112,
+  which is exactly how a grid drifts from the model that validates it.
 - Header bands are `z=0` decoration with the title/subtitle textboxes at `z=1` on top; the overlap
   check therefore only considers `z >= 1`. Two textboxes that overlap by 2px is a real defect.
 - **Renaming a measure in a shared semantic model is a breaking change.** Fabric does not warn,

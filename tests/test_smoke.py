@@ -700,8 +700,9 @@ def test_the_card_stack_that_clipped_on_screen_is_rejected():
     assert dr.card_height(11, 24, 9) > 112, (
         "the stack observed clipped in Fabric must not fit a 112px card")
 
-    # The card that actually ships drops the redundant label, and fits.
-    assert dr.card_height(dr.CARD_TITLE_PT, dr.CARD_VALUE_PT) <= dr.CARD_H
+    # The card that actually ships draws all three texts, and fits them.
+    assert dr.card_height(dr.CARD_TITLE_PT, dr.CARD_VALUE_PT,
+                          dr.CARD_LABEL_PT) <= dr.CARD_H
 
 
 def test_padding_is_charged_per_stacked_text_not_once():
@@ -750,17 +751,63 @@ def test_every_card_is_tall_enough_for_what_it_actually_renders(report_def):
     assert seen == 20, f"expected 20 cards, found {seen}"
 
 
-def test_cards_do_not_repeat_their_title_in_english(report_def):
-    """The label under the value was the raw measure name, duplicating the
-    French title above it — and it was the line that got clipped."""
+def test_the_category_label_is_declared_visible(report_def):
+    """Asked for explicitly: the label under the value must be shown.
+
+    Power BI was observed ignoring show:false here, so hiding it would be a
+    no-op today — but relying on a bug to satisfy a requirement is not a
+    requirement being satisfied. Declare it visible, and size for it.
+    """
     import deploy_report as dr
     for section in report_def["report"]["sections"]:
         for vc in section["visualContainers"]:
             sv = json.loads(vc["config"])["singleVisual"]
             if sv["visualType"] != "cardVisual":
                 continue
-            assert not dr._shown(sv.get("objects", {}), "categoryLabel"), (
-                "the category label repeats the title and must stay off")
+            assert dr._shown(sv.get("objects", {}), "categoryLabel"), (
+                f"{json.loads(vc['config'])['name']}: the category label must "
+                f"stay visible")
+
+
+def test_a_card_fits_even_if_power_bi_ignores_show_false(report_def):
+    """Evidence, not derivation: the renderer ignored our hide toggle.
+
+    The live report definition read back from Fabric carried
+    categoryLabel show:false on all 20 cards, and Power BI drew the label
+    anyway — clipped, because the box was sized for two texts. The validator
+    was not wrong; it believed a declaration the engine did not honour.
+
+    So sizing must not depend on a toggle we cannot verify: every card must
+    fit title + value + label, whatever `show` says.
+    """
+    import deploy_report as dr
+    seen = 0
+    for section in report_def["report"]["sections"]:
+        for vc in section["visualContainers"]:
+            sv = json.loads(vc["config"])["singleVisual"]
+            if sv["visualType"] != "cardVisual":
+                continue
+            seen += 1
+            objs = sv.get("objects", {})
+            worst = dr.card_height(
+                dr._font_pt(sv.get("vcObjects", {}), "title", dr.CARD_TITLE_PT),
+                dr._font_pt(objs, "calloutValue", dr.CARD_VALUE_PT),
+                dr._font_pt(objs, "categoryLabel", dr.CARD_LABEL_PT))
+            assert vc["height"] >= worst, (
+                f"card is {vc['height']}px but needs {worst}px if the hide "
+                f"toggle is ignored, as Power BI was observed to do")
+    assert seen == 20, f"expected 20 cards, found {seen}"
+
+
+def test_the_rows_below_the_cards_clear_them(report_def):
+    """The cards grew into row 1's old position; the grid must move together."""
+    import deploy_report as dr
+    assert dr.CARD_Y + dr.CARD_H <= dr.ROW1_Y, (
+        f"cards end at {dr.CARD_Y + dr.CARD_H}px, row 1 starts at {dr.ROW1_Y}px")
+    assert dr.ROW1_Y + dr.ROW1_H <= dr.ROW2_Y
+    assert dr.ROW2_Y + dr.ROW2_H <= dr.CANVAS_H
+    assert not [p for p in dr.validate_layout(report_def["report"])], (
+        "the shipped geometry must be defect-free")
 
 
 def test_validator_detects_the_geometry_that_shipped(report_def):

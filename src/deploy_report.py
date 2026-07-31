@@ -132,11 +132,14 @@ def _card(name, x, y, w, h, table, measure, accent, title, z=1):
             "outline": [{"properties": {"show": _lit("false")}}],
             "calloutValue": [{"properties": {"fontSize": _lit(f"{CARD_VALUE_PT}D"), "bold": _lit("true"),
                                              "color": _solid(accent)}}],
-            # Off on purpose. It renders the raw measure name in English
-            # ("Sends per Customer") directly under the French title that already
-            # says the same thing ("Emails / Client") — duplicated content, and it
-            # was the line Power BI clipped. Two texts fit where three did not.
-            "categoryLabel": [{"properties": {"show": _lit("false")}}],
+            # Shown, and the box is sized for it. It was previously declared
+            # "show": false to save a line — but the live report carried that
+            # declaration and Power BI rendered the label anyway, clipped. A
+            # hide toggle we cannot verify is a claim, not a fact, so the card
+            # is now tall enough for all three texts whatever the toggle does.
+            "categoryLabel": [{"properties": {"show": _lit("true"),
+                                              "fontSize": _lit(f"{CARD_LABEL_PT}D"),
+                                              "color": _solid("#605E5C")}}],
         },
         "vcObjects": {
             "title": _vc_title(title, color="#605E5C", size=f"{CARD_TITLE_PT}D"),
@@ -382,7 +385,14 @@ HEADER_SUB_Y, HEADER_SUB_PT, HEADER_SUB_H = 50, 10, 26
 HEADER_PAD_BOTTOM = 4     # 6 + 42 + 26 = 74, band is 80
 
 CARD_TITLE_PT, CARD_VALUE_PT, CARD_LABEL_PT = 11, 24, 9
-CARD_Y, CARD_H = 88, 112  # card_height(11, 24) = 103, so 9px of margin
+# The card renders three texts: French title, value, category label.
+# card_height(11, 24, 9) = 128, so the box is exactly the stack it draws.
+CARD_Y, CARD_H = 88, 128
+
+# Two content rows underneath the cards. Named because the cards grew into the
+# old row-1 position: the rows must move together or they collide.
+ROW1_Y, ROW1_H = 224, 226   # 224 + 226 = 450
+ROW2_Y, ROW2_H = 462, 246   # 462 + 246 = 708, 12px of bottom margin
 
 
 def _font_pt(objects, group, default):
@@ -509,17 +519,17 @@ def build_report(state, config):
     # ── Page 1 — Direction : la valeur du portefeuille et son exposition ──
     p1 = header("d", C_BLUE, "Customer 360 — Pilotage Direction",
                 "Valeur du portefeuille, exposition a l'attrition et sante de la relation client") + [
-        _card("c1", 28, 88, 238, 112, "orders", "Revenue", NEUTRAL, "Chiffre d'Affaires"),
-        _card("c2", 278, 88, 238, 112, "crm_customers", "Total Customers", NEUTRAL, "Clients"),
-        _card("c3", 528, 88, 238, 112, "crm_customer_profile", "At Risk %", ALERT, "Part a Risque"),
-        _card("c4", 778, 88, 238, 112, "crm_customer_profile", "CLV at Risk", ALERT, "Valeur Vie Exposee"),
-        _card("c5", 1028, 88, 224, 112, "crm_customer_profile", "Avg NPS", GOOD, "NPS Moyen"),
-        _line("l1", 28, 208, 760, 242, "orders", "order_at", "orders", "Revenue",
+        _card("c1", 28, CARD_Y, 238, CARD_H, "orders", "Revenue", NEUTRAL, "Chiffre d'Affaires"),
+        _card("c2", 278, CARD_Y, 238, CARD_H, "crm_customers", "Total Customers", NEUTRAL, "Clients"),
+        _card("c3", 528, CARD_Y, 238, CARD_H, "crm_customer_profile", "At Risk %", ALERT, "Part a Risque"),
+        _card("c4", 778, CARD_Y, 238, CARD_H, "crm_customer_profile", "CLV at Risk", ALERT, "Valeur Vie Exposee"),
+        _card("c5", 1028, CARD_Y, 224, CARD_H, "crm_customer_profile", "Avg NPS", GOOD, "NPS Moyen"),
+        _line("l1", 28, ROW1_Y, 760, ROW1_H, "orders", "order_at", "orders", "Revenue",
               "Chiffre d'Affaires dans le Temps (le decrochage post-campagne)", color=C_BLUE),
-        _donut("dn1", 800, 208, 452, 242, "crm_customer_profile", "risk_band",
+        _donut("dn1", 800, ROW1_Y, 452, ROW1_H, "crm_customer_profile", "risk_band",
                "crm_customer_profile", "Profiled Customers",
                "Repartition du Portefeuille par Bande de Risque"),
-        _bar("b1", 28, 462, 1224, 246, "crm_customers", "lifecycle_stage",
+        _bar("b1", 28, ROW2_Y, 1224, ROW2_H, "crm_customers", "lifecycle_stage",
              "crm_customer_profile", "Avg Churn Score",
              "Score d'Attrition Moyen par Etape du Cycle de Vie"),
     ]
@@ -527,18 +537,18 @@ def build_report(state, config):
     # ── Page 2 — Retention : DETECT ──
     p2 = header("r", C_TEAL, "Retention — Detection de la Cohorte a Risque",
                 f"Clients acheteurs scorant >= {at_risk}/100 : recence, engagement, desabonnement, friction") + [
-        _card("c6", 28, 88, 238, 112, "crm_customer_profile", "Customers at Risk", ALERT, "Clients a Risque"),
-        _card("c7", 278, 88, 238, 112, "crm_customer_profile", "Avg Churn Score", ALERT, "Score Moyen"),
-        _card("c8", 528, 88, 238, 112, "crm_customer_profile", "Avg Recency (days)", NEUTRAL, "Recence Moyenne (j)"),
-        _card("c9", 778, 88, 238, 112, "crm_customer_profile", "Unsubscribed Customers", ALERT, "Desabonnes"),
-        _card("c10", 1028, 88, 224, 112, "crm_customers", "Churned Customers", ALERT, "Clients Perdus"),
-        _bar("b2", 28, 208, 760, 242, "crm_customer_profile", "risk_band",
+        _card("c6", 28, CARD_Y, 238, CARD_H, "crm_customer_profile", "Customers at Risk", ALERT, "Clients a Risque"),
+        _card("c7", 278, CARD_Y, 238, CARD_H, "crm_customer_profile", "Avg Churn Score", ALERT, "Score Moyen"),
+        _card("c8", 528, CARD_Y, 238, CARD_H, "crm_customer_profile", "Avg Recency (days)", NEUTRAL, "Recence Moyenne (j)"),
+        _card("c9", 778, CARD_Y, 238, CARD_H, "crm_customer_profile", "Unsubscribed Customers", ALERT, "Desabonnes"),
+        _card("c10", 1028, CARD_Y, 224, CARD_H, "crm_customers", "Churned Customers", ALERT, "Clients Perdus"),
+        _bar("b2", 28, ROW1_Y, 760, ROW1_H, "crm_customer_profile", "risk_band",
              "crm_customer_profile", "Revenue at Risk",
              "Chiffre d'Affaires Historique Expose par Bande de Risque"),
-        _donut("dn2", 800, 208, 452, 242, "crm_interactions", "sentiment",
+        _donut("dn2", 800, ROW1_Y, 452, ROW1_H, "crm_interactions", "sentiment",
                "crm_interactions", "Total Interactions",
                "Interactions Support par Sentiment"),
-        _table("tbl1", 28, 462, 1224, 246, [
+        _table("tbl1", 28, ROW2_Y, 1224, ROW2_H, [
             ("crm_customers", "last_name", "Column"),
             ("crm_customers", "city", "Column"),
             ("crm_customers", "lifecycle_stage", "Column"),
@@ -552,21 +562,21 @@ def build_report(state, config):
     # ── Page 3 — Marketing : DIAGNOSE (la cause racine) ──
     p3 = header("m", C_GOLD, "Marketing — Diagnostic de la Pression Commerciale",
                 f"Pression email par campagne : « {culprit} » sur-sollicite le segment {victim}") + [
-        _card("c11", 28, 88, 238, 112, "marketing_sends", "Sends per Customer", ALERT, "Emails / Client"),
-        _card("c12", 278, 88, 238, 112, "marketing_events", "Unsubscribe Rate", ALERT, "Taux de Desabo."),
-        _card("c13", 528, 88, 238, 112, "marketing_events", "Open Rate", GOOD, "Taux d'Ouverture"),
-        _card("c14", 778, 88, 238, 112, "marketing_events", "Click Through Rate", GOOD, "Taux de Clic"),
-        _card("c15", 1028, 88, 224, 112, "marketing_sends", "Total Sends", NEUTRAL, "Emails Envoyes"),
-        _bar("b3", 28, 208, 760, 242, "marketing_campaigns", "campaign_name",
+        _card("c11", 28, CARD_Y, 238, CARD_H, "marketing_sends", "Sends per Customer", ALERT, "Emails / Client"),
+        _card("c12", 278, CARD_Y, 238, CARD_H, "marketing_events", "Unsubscribe Rate", ALERT, "Taux de Desabo."),
+        _card("c13", 528, CARD_Y, 238, CARD_H, "marketing_events", "Open Rate", GOOD, "Taux d'Ouverture"),
+        _card("c14", 778, CARD_Y, 238, CARD_H, "marketing_events", "Click Through Rate", GOOD, "Taux de Clic"),
+        _card("c15", 1028, CARD_Y, 224, CARD_H, "marketing_sends", "Total Sends", NEUTRAL, "Emails Envoyes"),
+        _bar("b3", 28, ROW1_Y, 760, ROW1_H, "marketing_campaigns", "campaign_name",
              "marketing_sends", "Sends per Customer",
              f"Emails par Client et par Campagne — « {culprit} » decroche"),
-        _donut("dn3", 800, 208, 452, 242, "marketing_campaigns", "objective",
+        _donut("dn3", 800, ROW1_Y, 452, ROW1_H, "marketing_campaigns", "objective",
                "marketing_campaigns", "Total Budget",
                "Budget par Objectif de Campagne"),
-        _column("col1", 28, 462, 605, 246, "marketing_campaigns", "campaign_name",
+        _column("col1", 28, ROW2_Y, 605, ROW2_H, "marketing_campaigns", "campaign_name",
                 "marketing_events", "Unsubscribes",
                 "Desabonnements par Campagne (la consequence)", labels=False),
-        _column("col2", 647, 462, 605, 246, "marketing_campaigns", "campaign_name",
+        _column("col2", 647, ROW2_Y, 605, ROW2_H, "marketing_campaigns", "campaign_name",
                 "marketing_events", "Open Rate",
                 "Taux d'Ouverture par Campagne (l'engagement qui s'effondre)", labels=False),
     ]
@@ -574,18 +584,18 @@ def build_report(state, config):
     # ── Page 4 — Commerce : QUANTIFY ──
     p4 = header("k", C_RED, "Commerce — Impact Business & Attribution",
                 "Chiffre d'affaires, panier moyen, contribution des campagnes et retours produits") + [
-        _card("c16", 28, 88, 238, 112, "orders", "Revenue", NEUTRAL, "Chiffre d'Affaires"),
-        _card("c17", 278, 88, 238, 112, "orders", "Total Orders", NEUTRAL, "Commandes"),
-        _card("c18", 528, 88, 238, 112, "orders", "Average Order Value", GOOD, "Panier Moyen"),
-        _card("c19", 778, 88, 238, 112, "orders", "Attributed Revenue", PREMIUM, "CA Attribue"),
-        _card("c20", 1028, 88, 224, 112, "returns", "Return Rate", ALERT, "Taux de Retour"),
-        _bar("b4", 28, 208, 760, 242, "products", "category", "order_lines", "Product Revenue",
+        _card("c16", 28, CARD_Y, 238, CARD_H, "orders", "Revenue", NEUTRAL, "Chiffre d'Affaires"),
+        _card("c17", 278, CARD_Y, 238, CARD_H, "orders", "Total Orders", NEUTRAL, "Commandes"),
+        _card("c18", 528, CARD_Y, 238, CARD_H, "orders", "Average Order Value", GOOD, "Panier Moyen"),
+        _card("c19", 778, CARD_Y, 238, CARD_H, "orders", "Attributed Revenue", PREMIUM, "CA Attribue"),
+        _card("c20", 1028, CARD_Y, 224, CARD_H, "returns", "Return Rate", ALERT, "Taux de Retour"),
+        _bar("b4", 28, ROW1_Y, 760, ROW1_H, "products", "category", "order_lines", "Product Revenue",
              "Chiffre d'Affaires par Categorie de Produit"),
-        _donut("dn4", 800, 208, 452, 242, "orders", "channel", "orders", "Revenue",
+        _donut("dn4", 800, ROW1_Y, 452, ROW1_H, "orders", "channel", "orders", "Revenue",
                "Repartition du CA par Canal de Vente"),
-        _bar("b5", 28, 462, 605, 246, "returns", "reason", "returns", "Total Returns",
+        _bar("b5", 28, ROW2_Y, 605, ROW2_H, "returns", "reason", "returns", "Total Returns",
              "Retours par Motif"),
-        _bar("b6", 647, 462, 605, 246, "crm_customers", "customer_type", "orders", "Revenue",
+        _bar("b6", 647, ROW2_Y, 605, ROW2_H, "crm_customers", "customer_type", "orders", "Revenue",
              "Chiffre d'Affaires par Type de Client"),
     ]
 
