@@ -552,10 +552,21 @@ def model_index(model_bim):
         idx[t["name"]] = {"columns": {c["name"] for c in t.get("columns", [])},
                           "measures": {m["name"] for m in t.get("measures", [])}}
     # Single-direction many-to-one: filters flow from the "one" side to the "many" side.
+    # A bothDirections relationship also lets them travel back up the bridge.
     flows = {}
     for r in model_bim["model"]["relationships"]:
         flows.setdefault(r["toTable"], set()).add(r["fromTable"])
+        if r.get("crossFilteringBehavior") == "bothDirections":
+            flows.setdefault(r["fromTable"], set()).add(r["toTable"])
     return {"tables": idx, "flows": flows}
+
+
+def _reaches(flows, src, dst, seen=None):
+    if src == dst:
+        return True
+    seen = seen or set()
+    seen.add(src)
+    return any(n not in seen and _reaches(flows, n, dst, seen) for n in flows.get(src, ()))
 
 
 def _visuals(report):
@@ -607,18 +618,13 @@ def test_report_projections_match_the_query(report_def):
 def test_report_groupings_respect_filter_direction(report_def, model_index):
     """The silent killer: grouping by a column that cannot filter the measure.
 
-    Every relationship is many-to-one and single-direction, so crm_customer_profile
-    cannot filter crm_customers, and crm_segments cannot filter marketing_sends.
+    Relationships are many-to-one, so crm_customer_profile cannot filter crm_customers.
     Such a visual does not error — it just repeats the grand total on every category.
+
+    Scope note: this only sees the report. The Data Agent asks far more axes than the
+    46 visuals do — see test_the_axes_the_data_agent_is_asked_on_actually_filter.
     """
     flows = model_index["flows"]
-
-    def reaches(src, dst, seen=None):
-        if src == dst:
-            return True
-        seen = seen or set()
-        seen.add(src)
-        return any(n not in seen and reaches(n, dst, seen) for n in flows.get(src, ()))
 
     for page, sv in _visuals(report_def["report"]):
         if sv["visualType"] in DECORATIVE:
@@ -627,9 +633,79 @@ def test_report_groupings_respect_filter_direction(report_def, model_index):
         measures = [s["Name"].split(".", 1) for s in sv["prototypeQuery"]["Select"] if "Measure" in s]
         for ctable, ccol in cols:
             for mtable, mname in measures:
-                assert reaches(ctable, mtable), (
+                assert _reaches(flows, ctable, mtable), (
                     f"{page}: grouping {ctable}[{ccol}] by [{mname}] ({mtable}) — "
                     f"filters cannot flow that way, every category would show the same total")
+
+
+# (grouping column table, measure table, what a demo question would ask)
+AGENT_AXES = [
+    ("crm_segments", "crm_customer_profile", "churn score by segment"),
+    ("crm_segments", "marketing_sends", "email pressure by segment"),
+    ("crm_segments", "orders", "revenue by segment"),
+    ("marketing_campaigns", "orders", "attributed revenue by campaign"),
+    ("marketing_campaigns", "marketing_events", "opens/unsubs by campaign"),
+    ("crm_customers", "crm_customer_profile", "risk by lifecycle stage"),
+    ("crm_customers", "orders", "revenue by customer attribute"),
+    ("crm_customer_profile", "crm_interactions", "complaints by risk band"),
+    ("crm_customer_profile", "orders", "revenue by risk band"),
+    ("crm_customer_profile", "marketing_sends", "email pressure by risk band"),
+    ("products", "order_lines", "units by product"),
+]
+
+# Axes the data genuinely cannot answer, kept explicit so a flat result is a
+# recorded decision and not an oversight. `returns` carries order_id and
+# customer_id but NO product_id, so no per-product return metric exists; faking
+# one by making order_lines <-> orders bidirectional would inflate [Revenue] per
+# category into figures that no longer sum to the total.
+KNOWN_FLAT_AXES = [
+    ("products", "returns", "return rate by product — returns are order-level"),
+]
+
+
+def test_the_axes_the_data_agent_is_asked_on_actually_filter(model_index):
+    """A wider net than the report: the agent groups by whatever the question implies.
+
+    All three entries that were broken on the tenant are in here — segment_name
+    repeated 29.5071 on all 13 segments, Attributed Revenue repeated 582 085 EUR on
+    all 21 campaigns, and Negative Interactions repeated 8 752 on all 5 risk bands.
+    None showed up in the report, because no visual crossed those axes.
+    """
+    flows, tables = model_index["flows"], model_index["tables"]
+    for ctable, mtable, question in AGENT_AXES:
+        assert ctable in tables, f"{ctable} is not in the model"
+        assert mtable in tables, f"{mtable} is not in the model"
+        assert _reaches(flows, ctable, mtable), (
+            f"'{question}': {ctable} cannot filter {mtable} — the agent would answer "
+            f"the grand total for every row and sound confident doing it")
+
+
+def test_the_known_dead_axes_are_still_dead(model_index):
+    """The complement of the guard above: if one of these starts filtering, someone
+    added a relationship whose consequences (inflated totals) need reviewing."""
+    flows = model_index["flows"]
+    for ctable, mtable, why in KNOWN_FLAT_AXES:
+        assert not _reaches(flows, ctable, mtable), (
+            f"{ctable} now filters {mtable} — that axis was documented as unanswerable "
+            f"({why}); check what the new path does to the grand totals")
+
+
+def test_attribution_measures_keep_an_incoming_campaign_filter(model_index, model_bim):
+    """CALCULATE replaces the filter on a column it filters itself.
+
+    Attribution filters orders[attributed_campaign_id] — the very column the campaign
+    relationship arrives on. Without KEEPFILTERS the campaign filter is overwritten and
+    every campaign shows the same total, relationship or not.
+    """
+    orders = next(t for t in model_bim["model"]["tables"] if t["name"] == "orders")
+    by_name = {m["name"]: m["expression"] for m in orders["measures"]}
+    for name in ("Attributed Orders", "Attributed Revenue"):
+        raw = by_name[name]
+        expr = " ".join(raw) if isinstance(raw, list) else raw
+        assert "attributed_campaign_id" in expr
+        assert expr.count("KEEPFILTERS") == 2, (
+            f"[{name}] filters attributed_campaign_id without KEEPFILTERS — "
+            f"CALCULATE would erase the campaign filter arriving on that column")
 
 
 def test_report_binds_to_the_configured_semantic_model(report_def, cfg):

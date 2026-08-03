@@ -383,12 +383,14 @@ def build_model_bim(config, state):
             _measure("Average Order Value", "AVERAGE(orders[total_amount_eur])",
                      "Average basket", fmt="#,0.00", folder="Commerce"),
             _measure("Attributed Orders",
-                     'COALESCE(CALCULATE(COUNTROWS(orders), NOT(ISBLANK(orders[attributed_campaign_id])), '
-                     'orders[attributed_campaign_id] <> ""), 0)',
+                     'COALESCE(CALCULATE(COUNTROWS(orders), '
+                     'KEEPFILTERS(NOT(ISBLANK(orders[attributed_campaign_id]))), '
+                     'KEEPFILTERS(orders[attributed_campaign_id] <> "")), 0)',
                      "Orders with a last-touch campaign", fmt="#,0", folder="Attribution"),
             _measure("Attributed Revenue",
                      'COALESCE(CALCULATE(SUM(orders[total_amount_eur]), '
-                     'NOT(ISBLANK(orders[attributed_campaign_id])), orders[attributed_campaign_id] <> ""), 0)',
+                     'KEEPFILTERS(NOT(ISBLANK(orders[attributed_campaign_id]))), '
+                     'KEEPFILTERS(orders[attributed_campaign_id] <> "")), 0)',
                      "Revenue attributed to campaigns", fmt="#,0", folder="Attribution"),
             _measure("Attribution Rate", "DIVIDE([Attributed Orders], [Total Orders])",
                      "Share of orders attributed", fmt="0.0%", folder="Attribution"),
@@ -458,11 +460,13 @@ def build_model_bim(config, state):
     })
 
     # ── Relationships (many -> one). NO second route between any pair. ──
+    # `both: True` marks a bridge that must let filters travel back up to the "one"
+    # side; without it a many-to-many axis silently returns the grand total.
     relationships = [
         {"name": "rel_profile_customer", "fromTable": "crm_customer_profile", "fromColumn": "customer_id",
-         "toTable": "crm_customers", "toColumn": "customer_id"},
+         "toTable": "crm_customers", "toColumn": "customer_id", "both": True},
         {"name": "rel_custseg_customer", "fromTable": "crm_customer_segments", "fromColumn": "customer_id",
-         "toTable": "crm_customers", "toColumn": "customer_id"},
+         "toTable": "crm_customers", "toColumn": "customer_id", "both": True},
         {"name": "rel_custseg_segment", "fromTable": "crm_customer_segments", "fromColumn": "segment_id",
          "toTable": "crm_segments", "toColumn": "segment_id"},
         {"name": "rel_interaction_customer", "fromTable": "crm_interactions", "fromColumn": "customer_id",
@@ -475,6 +479,10 @@ def build_model_bim(config, state):
          "toTable": "marketing_sends", "toColumn": "send_id"},
         {"name": "rel_order_customer", "fromTable": "orders", "fromColumn": "customer_id",
          "toTable": "crm_customers", "toColumn": "customer_id"},
+        # Last-touch attribution. Without it, slicing an order measure by campaign
+        # silently repeats the grand total on every campaign.
+        {"name": "rel_order_campaign", "fromTable": "orders", "fromColumn": "attributed_campaign_id",
+         "toTable": "marketing_campaigns", "toColumn": "campaign_id"},
         {"name": "rel_line_order", "fromTable": "order_lines", "fromColumn": "order_id",
          "toTable": "orders", "toColumn": "order_id"},
         {"name": "rel_line_product", "fromTable": "order_lines", "fromColumn": "product_id",
@@ -484,7 +492,8 @@ def build_model_bim(config, state):
     ]
     rels = [{"name": r["name"], "fromTable": r["fromTable"], "fromColumn": r["fromColumn"],
              "toTable": r["toTable"], "toColumn": r["toColumn"],
-             "crossFilteringBehavior": "oneDirection"} for r in relationships]
+             "crossFilteringBehavior": "bothDirections" if r.get("both") else "oneDirection"}
+            for r in relationships]
 
     lh_name = config.get("lakehouse_name", "LH_Customer360")
     sql_endpoint = state.get("lakehouse_sql_endpoint", "")
