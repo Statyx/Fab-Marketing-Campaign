@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  no-client-leak:
+    name: No client leak
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Scan tracked files for real identifiers / personal markers
+        env:
+          # Optional name-based rule, one entry per line. Kept OUT of the repo on purpose:
+          # a public file that enumerates client names is a worse leak than the isolated
+          # mention it would catch. Absent secret => the rule is skipped with a warning.
+          CLIENT_DENYLIST: ${{ secrets.CLIENT_DENYLIST }}
+        run: python .github/scripts/check_client_leak.py
+      - name: Ensure real config / state / dataset are not tracked
+        run: |
+          if git ls-files 'src/config.yaml' 'src/state.json' 'data/raw' | grep .; then
+            echo "::error::These files hold real Fabric identifiers or a generated dataset — they must stay gitignored."
+            exit 1
+          fi
+          echo "No real configuration or dataset is tracked."
+
+  tests:
+    name: pytest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      # The suite reads src/config.yaml, which is gitignored on purpose (it holds real
+      # tenant / capacity ids). Without this step every config-backed test errors on a
+      # fresh runner. The example files carry placeholders only, so nothing here needs a
+      # secret, an Azure credential or a live Fabric capacity.
+      - name: Materialize example config / state
+        run: |
+          cp src/config.example.yaml src/config.yaml
+          cp src/state.example.json src/state.json
+      # data/raw/ is gitignored because it is regenerable from a seed, not because it is
+      # secret. Skipping it left 28 tests unrun on every CI job — including the whole
+      # behaviour-before-labels gate, which is the one thing this repo must not regress.
+      # The generator is pure numpy/pandas: no network, no credential, no capacity.
+      - name: Generate the demo dataset
+        run: python src/generate_data.py
+      - name: Run tests
+        run: |
+          set -o pipefail
+          python -m pytest tests/ -v --tb=short | tee /tmp/pytest.out
+      # A skip is a test that did not run. The dataset step above exists precisely so
+      # there are none; if one appears, the gate has quietly shrunk.
+      - name: Fail if any test was skipped
+        run: |
+          if grep -qE '[0-9]+ skipped' /tmp/pytest.out; then
+            echo "::error::tests were skipped - the gate shrank; see the summary below"
+            grep -E '[0-9]+ (passed|skipped|failed)' /tmp/pytest.out
+            exit 1
+          fi
+          grep -E '[0-9]+ passed' /tmp/pytest.out

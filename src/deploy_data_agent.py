@@ -8,7 +8,7 @@ TWO MODES — this script exists to let us TEST the hypothesis, not just assert 
   python deploy_data_agent.py                   # dual-source: ontology + semantic model
 
 WHY THE EXPERIMENT MATTERS
-    On two sister projects (Publicis-Live-Event, Network_Operations) an ontology-only Data Agent
+    On two sister projects (Fab-Live-Event, Fab-Network-Operations) an ontology-only Data Agent
     could not answer any NUMERIC question: the GQL entitySelector resolved, but the
     timeSeriesSelector returned 0 rows. In BOTH those projects the ontology's numeric data came
     from an EVENTHOUSE (Kusto) — either bound directly as KustoTable, or via a OneLake mirror.
@@ -23,10 +23,18 @@ KNOWN LIMIT OF THE ONTOLOGY IN THIS PROJECT
     come from the graph by construction; they come from the semantic model. The ontology answers
     "how are things connected / who is affected".
 """
-import os, sys, winreg
+import os, sys
+# The venv activation on this project's Windows machines can wipe PATH, so the registry
+# copy is read back. That fix is Windows-only and `winreg` does not exist elsewhere, so an
+# unconditional import made this module unimportable on Linux - and the tests import it.
+if sys.platform == "win32":
+    import winreg
+
 
 
 def _restore_path():
+    if sys.platform != "win32":
+        return
     parts = []
     for root, sub in [(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
                       (winreg.HKEY_CURRENT_USER, "Environment")]:
