@@ -142,7 +142,7 @@ AGENTS: dict[str, dict] = {
             "Quelle campagne envoie le plus d'emails par client ?",
             f"Pourquoi la campagne « {CULPRIT} » genere-t-elle autant de desabonnements ?",
             "Compare les taux d'ouverture entre campagnes",
-            "Quel segment a le plus souffert de la pression email ?",
+            "Quel segment concentre le plus d'envois et quel est son score de churn ?",
             "Quel est le taux de desabonnement global ?",
         ],
     },
@@ -445,7 +445,7 @@ _UNIVERSAL_FOLLOWUPS = {
     "marketing": [
         "Quelle campagne envoie le plus d'emails par client ?",
         "Quel est le taux de desabonnement par campagne ?",
-        "Quel segment a le plus souffert de la pression email ?",
+        "Quel segment concentre le plus d'envois et quel est son score de churn ?",
     ],
     "commerce": [
         "Quelle categorie genere le plus de chiffre d'affaires ?",
