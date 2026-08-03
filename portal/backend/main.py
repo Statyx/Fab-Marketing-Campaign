@@ -74,6 +74,12 @@ WORKSPACE_NAME = _config_value("workspace_name", "CDR - Marketing Campaign")
 SM_NAME = _config_value("semantic_model_name", "SM_Marketing_Analytics")
 RPT_NAME = _config_value("report_name", "RPT_Marketing_Churn")
 CULPRIT = _config_value("culprit_campaign_name", "Black Friday Blast")
+
+# The Data Agent serialises runs per AGENT. Two questions in quick succession - one click
+# too fast on a follow-up button - get "A run is already in progress for this thread".
+# Measured 3 Aug 2026: still refused at 45s, answered at 150s. 6 x 25s covers that.
+BUSY_RETRIES = 6
+BUSY_WAIT_S = 25
 # Landing-page counters come from the generator's own volumes, so they can never
 # drift from the data that was actually generated.
 DEMO_COUNTS = {"customers": _config_int("customers", 0),
@@ -742,6 +748,7 @@ async def agent_chat(agent_key: str, req: ChatRequest):
             run_id = run_resp.json()["id"]
 
             run_status = ""
+            last_error = ""
             for _ in range(60):                    # up to ~2 min
                 await asyncio.sleep(2)
                 status_resp = await client.get(f"{base}/threads/{thread_id}/runs/{run_id}",
@@ -750,6 +757,7 @@ async def agent_chat(agent_key: str, req: ChatRequest):
                     continue
                 run_status = status_resp.json().get("status", "")
                 if run_status in ("completed", "failed", "cancelled", "expired"):
+                    last_error = str(status_resp.json().get("last_error") or "")
                     break
 
             msgs_resp = await client.get(f"{base}/threads/{thread_id}/messages",
@@ -785,7 +793,7 @@ async def agent_chat(agent_key: str, req: ChatRequest):
                             query_trace.append(ToolTrace(tool=fn,
                                                          arguments=fn_obj.get("arguments", ""),
                                                          output=(fn_obj.get("output", "") or "")[:5000]))
-            return answer, steps, query_trace, run_status
+            return answer, steps, query_trace, run_status, last_error
 
         # That sticky thread eventually reaches a state where EVERY run on it dies in ~2s
         # with {"code":"server_error"} before a single tool call - both datasources, any
@@ -798,15 +806,35 @@ async def agent_chat(agent_key: str, req: ChatRequest):
         # is mid-run on would break that run, which is why this is a recovery path only.
         thread_id = await _open_thread()
         log.warning(f"[{agent_key}] Q: {req.message[:80]}")
-        answer, steps, query_trace, run_status = await _attempt(thread_id)
+        answer, steps, query_trace, run_status, last_error = await _attempt(thread_id)
 
+        # Two different failures, two opposite cures - telling them apart is the whole point.
+        #
+        # 1. "A run is already in progress for this thread." The lock is per AGENT, not per
+        #    thread, despite the wording: proven 3 Aug 2026 - a brand-new thread id got the
+        #    same refusal 45s after the previous question, and the same question succeeded
+        #    150s later on the same agent. On stage this is one click too fast on a follow-up
+        #    button. Purging would be actively wrong here (it destroys nothing that blocks us
+        #    and can kill another persona's live run), so we WAIT and re-run, same thread.
+        for _ in range(BUSY_RETRIES):
+            if answer or "already in progress" not in last_error:
+                break
+            log.warning(f"[{agent_key}] agent occupe - attente {BUSY_WAIT_S}s puis nouvel essai")
+            await asyncio.sleep(BUSY_WAIT_S)
+            answer, steps, query_trace, run_status, last_error = await _attempt(thread_id)
+
+        # 2. Anything else that produced no answer - a poisoned sticky thread. Here the purge
+        #    IS the cure (see the note above the sticky-thread comment).
         if not answer:
             log.warning(f"[{agent_key}] run {run_status or 'inconnu'} - purge du fil {thread_id}, 1 nouvel essai")
             await client.delete(f"{base}/threads/{thread_id}", headers=headers, params=params)
             thread_id = await _open_thread()
-            answer, steps, query_trace, run_status = await _attempt(thread_id)
+            answer, steps, query_trace, run_status, last_error = await _attempt(thread_id)
 
         if not answer:
+            if "already in progress" in last_error:
+                raise HTTPException(503, "L'agent traite encore la question précédente. "
+                                         "Attendez quelques secondes et reposez celle-ci.")
             raise HTTPException(504, "L'agent n'a pas produit de réponse pour cette question "
                                      f"(statut du run : {run_status or 'inconnu'}). Reposez la question.")
 

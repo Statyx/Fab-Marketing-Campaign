@@ -1914,3 +1914,48 @@ def test_followups_and_suggestions_share_one_renderer():
         "both the opening suggestions and the follow-ups must go through sugBtnHtml")
     assert "d.followUps.map(function(s){return sugBtnHtml(key,s);})" in html, (
         "the follow-ups render through their own path again - they will lose the pill")
+
+
+def test_a_busy_agent_is_waited_out_not_purged():
+    """Two failures look identical from the portal and need opposite cures.
+
+    3 Aug 2026: the Data Agent serialises runs per AGENT, not per thread, though it says
+    "A run is already in progress for this thread". A brand-new thread id got the same
+    refusal 45s after the previous question and the same question succeeded 150s later.
+    On stage that is one click too fast on a follow-up button.
+
+    The portal's only recovery was purge-the-thread-and-retry, which for this failure is
+    worse than doing nothing: the block is not on our thread, the retry hits it again 3s
+    later, and DELETE can kill a run another persona is mid-way through. So the busy case
+    must WAIT on the same thread, and only the other case may purge.
+
+    The distinction is invisible without last_error, so that is asserted too - polling only
+    the status collapses both failures into "no answer" and the wait can never be chosen.
+    """
+    src = (ROOT / "portal" / "backend" / "main.py").read_text(encoding="utf-8")
+    assert "already in progress" in src, (
+        "the busy refusal must be recognised by its message; without it the portal purges "
+        "a thread that was never the problem and gives up in 3 seconds")
+    assert 'get("last_error")' in src, (
+        "run status alone cannot tell 'agent busy' from 'thread poisoned' - both are "
+        "status=failed with no answer; last_error must actually be READ from the run, not "
+        "merely named (a variable initialised to \"\" satisfies a name check and nothing else)")
+
+    # Anchor on the retry loop itself. A loose search for asyncio.sleep finds the 2s poll
+    # in _attempt, which sits before the purge and makes this pass with no wait at all -
+    # that hole was found by mutation on 3 Aug 2026, not by reading the test.
+    loop = src.find("for _ in range(BUSY_RETRIES)")
+    assert loop != -1, "the busy retry loop must be driven by BUSY_RETRIES"
+    body = src[loop:src.find("if not answer:", loop)]
+    assert "asyncio.sleep(BUSY_WAIT_S)" in body, (
+        "the busy branch must actually wait - retrying immediately hits the same per-agent "
+        "lock, and deleting the thread does not release it")
+    assert "delete" not in body, (
+        "the busy branch must not purge: the block is not on our thread, and DELETE can "
+        "kill a run another persona is mid-way through")
+
+    mod = _module_constants(ast.parse(src))
+    total = mod.get("BUSY_RETRIES", 0) * mod.get("BUSY_WAIT_S", 0)
+    assert total >= 120, (
+        f"the wait budget is {total}s; the observed lock was still held at 45s and clear "
+        f"at 150s, so anything under ~120s gives up while the agent is still working")
