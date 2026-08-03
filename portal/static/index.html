@@ -341,6 +341,30 @@ body {
   letter-spacing: 0.5px; color: var(--accent-dark);
 }
 
+/* ═══════════════ SOURCE BADGE ═══════════════ */
+.msg-source { margin-top: 10px; }
+.source-badge {
+  display: inline-flex; align-items: baseline; gap: 7px;
+  padding: 5px 12px; border-radius: 14px;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.2px;
+  border: 1px solid transparent;
+}
+.source-badge em {
+  font-style: normal; font-weight: 600; font-size: 9.5px;
+  text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.75;
+}
+.source-badge.src-model    { background: rgba(0,120,212,0.10); color: #1B5E9E; border-color: rgba(0,120,212,0.28); }
+.source-badge.src-ontology { background: rgba(138,43,226,0.10); color: #6B21A8; border-color: rgba(138,43,226,0.28); }
+.source-badge.src-cache    { background: var(--bg-secondary); color: var(--text-secondary); border-color: var(--border); }
+
+.source-legend {
+  display: flex; gap: 14px; flex-wrap: wrap; align-items: center;
+  font-size: 10.5px; color: var(--text-secondary); margin-top: 6px;
+}
+.source-legend b { font-weight: 700; }
+.source-legend .sl-model    { color: #1B5E9E; }
+.source-legend .sl-ontology { color: #6B21A8; }
+
 /* ═══════════════ QUERY INSPECTOR ═══════════════ */
 .query-toggle {
   background: var(--bg-secondary); border: 1px solid var(--border); color: var(--text-secondary);
@@ -965,6 +989,11 @@ function ensureCtx(key){
         '<p>Posez-moi votre question, ou choisissez une suggestion ci-dessous.</p></div>'+
         '<div class="msg-time">'+timeNow()+'</div></div></div></div>'+
       '<div class="suggestions" id="sug-'+key+'">'+sugHtml+'</div>'+
+      '<div class="source-legend">'+
+        '<span>Chaque r&eacute;ponse indique sa source&nbsp;:</span>'+
+        '<span class="sl-model"><b>&#128202; Mod&egrave;le s&eacute;mantique</b> &mdash; un chiffre (DAX)</span>'+
+        '<span class="sl-ontology"><b>&#128376; Ontologie</b> &mdash; une relation, un chemin, une cause (GQL)</span>'+
+      '</div>'+
       '<div class="chat-input"><input type="text" id="input-'+key+'" placeholder="Posez votre question à '+escHtml(cfg.name)+'\u2026" onkeydown="if(event.key===\'Enter\')sendMsg(\''+key+'\')">'+
         '<button onclick="sendMsg(\''+key+'\')" id="send-'+key+'">&#10148;</button></div>'+
     '</div>'+
@@ -988,6 +1017,13 @@ function setView(mode){
 /* ═══════════════ MESSAGES ═══════════════ */
 function highlightDax(code){
   var kws='EVALUATE|SUMMARIZE|SUMMARIZECOLUMNS|FILTER|CALCULATE|CALCULATETABLE|ALL|ALLSELECTED|VALUES|DISTINCT|TOPN|ORDER BY|ASC|DESC|ADDCOLUMNS|SELECTCOLUMNS|VAR|RETURN|DEFINE|MEASURE|IF|SWITCH|TRUE|FALSE|BLANK|NOT|AND|OR|IN|RELATED|RELATEDTABLE|KEEPFILTERS|REMOVEFILTERS|AVERAGE|SUM|MIN|MAX|COUNT|COUNTROWS|DIVIDE|FORMAT|YEAR|MONTH|DAY|DATE|TODAY|NOW|EARLIER|EARLIEST|HASONEVALUE|SELECTEDVALUE|ISBLANK|CONCATENATEX|UNICHAR';
+  return highlightCode(code,kws);
+}
+function highlightGql(code){
+  var kws='MATCH|OPTIONAL|WHERE|RETURN|DISTINCT|ORDER BY|SKIP|LIMIT|ASC|DESC|AND|OR|NOT|IN|AS|WITH|COUNT|SUM|AVG|MIN|MAX|LOWER|UPPER|TRIM';
+  return highlightCode(code,kws);
+}
+function highlightCode(code,kws){
   var escaped=code.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   escaped=escaped.replace(/"([^"]*)"/g,'<span class="str">"$1"</span>');
   escaped=escaped.replace(/\b(\d+(?:\.\d+)?)\b/g,'<span class="num">$1</span>');
@@ -995,38 +1031,44 @@ function highlightDax(code){
   escaped=escaped.replace(kwRe,'<span class="kw">$1</span>');
   return escaped;
 }
-function extractDaxFromMarkdown(text){
-  // nl2code output is markdown: "# Variation 1\n\n```dax\n...code...\n```"
-  var m=text.match(/```(?:dax)?\s*\n([\s\S]*?)```/);
-  if(m)return m[1].trim();
-  // Maybe it's raw DAX already
-  if(/EVALUATE|DEFINE|SUMMARIZE/i.test(text))return text.trim();
-  return null;
+/* The source badge and the query both come from the backend, which reads them
+   from the single authoritative step (analyze.database.execute). The front end
+   deliberately does not re-derive them from queryTrace: an ontology run ends by
+   loading the SEMANTIC MODEL few-shots, so scanning the trace mislabels exactly
+   the graph answers this badge exists to celebrate. */
+var SOURCE_LABELS={
+  ontology:      {icon:'&#128376;', text:'Ontologie', sub:'graphe &middot; GQL', cls:'src-ontology'},
+  semantic_model:{icon:'&#128202;', text:'Mod&egrave;le s&eacute;mantique', sub:'Direct Lake &middot; DAX', cls:'src-model'}
+};
+/* One place decides what the badge reads, so the live answer and its replay from
+   history can never disagree. Old history entries predate these fields and yield
+   an empty source - which renders as "instantaneous", the honest answer for a
+   record we cannot attribute. */
+function srcMeta(d){
+  if(!d)return null;
+  return {source:d.source||'',sourceName:d.sourceName||'',
+          queryLanguage:d.queryLanguage||'',generatedQuery:d.generatedQuery||''};
 }
-function buildInspector(queryTrace){
-  if(!queryTrace||!queryTrace.length)return '';
-  var dax=null;
-  // 1. Find nl2code step and extract DAX from its output
-  queryTrace.forEach(function(t){
-    if(dax)return;
-    if(t.tool&&t.tool.toLowerCase().indexOf('nl2code')>=0){
-      if(t.output){dax=extractDaxFromMarkdown(t.output);}
-      if(!dax&&t.arguments){dax=extractDaxFromMarkdown(t.arguments);}
-    }
-  });
-  // 2. Fallback: any step with a DAX code block
-  if(!dax){
-    queryTrace.forEach(function(t){
-      if(dax)return;
-      if(/fewshot|loading/i.test(t.tool||''))return;
-      if(t.output){dax=extractDaxFromMarkdown(t.output);}
-      if(!dax&&t.arguments){dax=extractDaxFromMarkdown(t.arguments);}
-    });
+function buildSourceBadge(meta){
+  if(!meta)return '';
+  var d=SOURCE_LABELS[meta.source];
+  if(!d){
+    return '<div class="msg-source"><span class="source-badge src-cache">&#9889; R&eacute;ponse instantan&eacute;e'+
+           '<em>d&eacute;j&agrave; calcul&eacute;e &middot; source non tra&ccedil;able</em></span></div>';
   }
-  if(!dax)return '<span class="qi-no-query">Answered from cache — no DAX query generated</span>';
-  var html='<button class="query-toggle" onclick="toggleInspector(this)"><span class="chevron">&#9654;</span> Show DAX Query</button>';
+  var name=meta.sourceName?' &middot; '+escHtml(meta.sourceName):'';
+  return '<div class="msg-source"><span class="source-badge '+d.cls+'">'+d.icon+' '+d.text+
+         '<em>'+d.sub+name+'</em></span></div>';
+}
+function buildInspector(meta){
+  if(!meta||!meta.generatedQuery){
+    return '<span class="qi-no-query">Aucune requ&ecirc;te g&eacute;n&eacute;r&eacute;e pour cette r&eacute;ponse</span>';
+  }
+  var lang=meta.queryLanguage||'DAX';
+  var body=lang==='GQL'?highlightGql(meta.generatedQuery):highlightDax(meta.generatedQuery);
+  var html='<button class="query-toggle" onclick="toggleInspector(this)"><span class="chevron">&#9654;</span> Voir la requ&ecirc;te '+escHtml(lang)+'</button>';
   html+='<div class="query-inspector"><div class="qi-step">';
-  html+='<div class="qi-code-wrap"><button class="qi-copy-btn" onclick="copyQiCode(this)">Copy</button><pre>'+highlightDax(dax)+'</pre></div>';
+  html+='<div class="qi-code-wrap"><button class="qi-copy-btn" onclick="copyQiCode(this)">Copier</button><pre>'+body+'</pre></div>';
   html+='</div></div>';
   return html;
 }
@@ -1043,7 +1085,7 @@ function copyQiCode(btn){
   });
 }
 
-function addMsg(key,role,content,steps,queryTrace){
+function addMsg(key,role,content,steps,meta){
   var c=document.getElementById('msgs-'+key),cfg=agents[key];
   var div=document.createElement('div');div.className='msg msg-'+role;
   var av=role==='user'?'&#128100;':cfg.icon;
@@ -1057,8 +1099,9 @@ function addMsg(key,role,content,steps,queryTrace){
       return '<span class="step-tag">'+escHtml(label)+'</span>';
     }).join('')+'</div>';
   }
-  var qi=role==='assistant'?buildInspector(queryTrace):'';
-  div.innerHTML='<div class="msg-avatar">'+av+'</div><div class="msg-content"><div class="msg-body">'+html+sh+qi+'</div><div class="msg-time">'+timeNow()+'</div></div>';
+  var badge=role==='assistant'&&meta?buildSourceBadge(meta):'';
+  var qi=role==='assistant'&&meta?buildInspector(meta):'';
+  div.innerHTML='<div class="msg-avatar">'+av+'</div><div class="msg-content"><div class="msg-body">'+html+badge+sh+qi+'</div><div class="msg-time">'+timeNow()+'</div></div>';
   c.appendChild(div);c.scrollTop=c.scrollHeight;
 }
 
@@ -1080,7 +1123,7 @@ async function sendMsg(key){
   try{
     var r=await chatFetchWithRetry(key,q);
     if(!r.ok)throw new Error('HTTP '+r.status);
-    var d=await r.json();hideTyping(key);addMsg(key,'assistant',d.answer,d.steps,d.queryTrace);
+    var d=await r.json();hideTyping(key);addMsg(key,'assistant',d.answer,d.steps,srcMeta(d));
     saveToHistory(key,q,d);
     var sugBox=document.getElementById('sug-'+key);
     if(d.followUps && d.followUps.length>0){
@@ -1211,7 +1254,11 @@ function saveToHistory(agentKey,question,response){
       question:question,
       answer:response.answer||'',
       steps:response.steps||[],
-      queryTrace:response.queryTrace||[]
+      queryTrace:response.queryTrace||[],
+      source:response.source||'',
+      sourceName:response.sourceName||'',
+      queryLanguage:response.queryLanguage||'',
+      generatedQuery:response.generatedQuery||''
     });
     if(hist.length>HISTORY_MAX)hist=hist.slice(0,HISTORY_MAX);
     localStorage.setItem(HISTORY_KEY,JSON.stringify(hist));
@@ -1272,7 +1319,7 @@ function replayFromHistory(agentKey,entryId){
   if(!agents[agentKey])return;
   enterAgent(agentKey);
   addMsg(agentKey,'user',entry.question);
-  addMsg(agentKey,'assistant',entry.answer,entry.steps,entry.queryTrace);
+  addMsg(agentKey,'assistant',entry.answer,entry.steps,srcMeta(entry));
 }
 
 /* ═══════════════ MCP CONNECT MODAL ═══════════════ */

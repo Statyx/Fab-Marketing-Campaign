@@ -1186,12 +1186,21 @@ def test_ensure_tenant_warns_instead_of_crashing_without_config(capsys):
 
 
 # --- data agent grounding -------------------------------------------------
-# Observed live on 3 Aug 2026: asked "why does Black Friday Blast generate so
-# many unsubscribes", the agent executed NO query (trace held only
-# analyze.database.fewshots.loading) and answered anyway. Asked which customers
-# it hit, it invented a name list and "over 1 500" against a true 317.
-# Few-shots are query TEMPLATES - they carry no results - so a confident answer
-# with no execute step is fabricated, not recalled.
+# Observed live on 3 Aug 2026: asked which customers Black Friday Blast hit, the
+# agent answered "over 1 500" against a true 317.
+#
+# My first reading of that was wrong and is recorded here so it is not repeated.
+# I concluded the answer was fabricated, because few-shots are query TEMPLATES
+# carrying no results, so an answer with no execute step could only be invented.
+# Two observations killed that:
+#   - all ten customers it named are real, with the right e-mail and 4 Black
+#     Friday sends each, so a query HAD run;
+#   - a no-execute answer was later exactly right ("3.90 e-mails per customer,
+#     12.5 % open rate"), confirmed by DAX across all 20 campaigns.
+# The no-execute path is a response cache - a novel question always executed,
+# a repeated one replayed in 12 s - and redeploying the agent clears it.
+# The 1 503 came from the ontology's 200-row cap: the answer acknowledged the
+# cap and estimated past it anyway.
 
 def _agent_module():
     import deploy_data_agent
@@ -1283,3 +1292,122 @@ def test_the_agent_may_not_estimate_a_total_from_a_capped_list():
             f"the hedging word {hedge!r} must be named as forbidden before a number"
     assert "second query" in lowered, \
         "the agent must be told to run the scalar aggregate rather than estimate"
+
+
+# --- which source answered ------------------------------------------------
+# Payloads below are verbatim from live runs on 3 Aug 2026. They are the whole
+# point of these tests: the shapes are undocumented, so a test written from a
+# guess would pass against the guess and fail against Fabric.
+
+def _trace_source():
+    import importlib.util
+    path = ROOT / "portal" / "backend" / "trace_source.py"
+    spec = importlib.util.spec_from_file_location("trace_source", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+_ONTOLOGY_RUN = [
+    {"tool": "generate.filename", "arguments": '{"natural_language_description":"..."}'},
+    {"tool": "analyze.database.execute", "arguments": json.dumps({
+        "datasource_name": "ONT_Customer360",
+        "datasource_type": "Ontology",
+        "code": "```ontology\n" + json.dumps({"entitySelector": {
+            "queryType": "GQL",
+            "query": "MATCH (node_Customer:`Customer`)-[:`CustomerBelongsToAccount`]->"
+                     "(node_Account:`Account`) RETURN node_Account.`account_name`"}}) + "\n```",
+    })},
+    {"tool": "trace.analyze_ontology", "arguments": '{"query":"..."}'},
+    # The sting: an ontology run ends by loading the SEMANTIC MODEL few-shots.
+    {"tool": "analyze.database.fewshots.loading", "arguments": json.dumps({
+        "datasource_name": "SM_Marketing_Analytics", "datasource_type": "SemanticModel"})},
+]
+
+_SEMANTIC_MODEL_RUN = [
+    {"tool": "analyze.database.execute", "arguments": json.dumps({
+        "datasource_name": "SM_Marketing_Analytics",
+        "datasource_type": "SemanticModel",
+        "code": "```dax\nEVALUATE SUMMARIZECOLUMNS('orders'[channel], \"CA\", [Product Revenue])\n```",
+    })},
+]
+
+_CACHED_RUN = [
+    {"tool": "analyze.database.fewshots.loading", "arguments": json.dumps({
+        "datasource_name": "SM_Marketing_Analytics", "datasource_type": "SemanticModel"})},
+]
+
+
+def test_the_source_is_read_from_the_execute_call_not_from_any_step():
+    """An ontology run's LAST step names the semantic model.
+
+    Captured live: a graph answer whose trace ends on fewshots.loading for
+    SM_Marketing_Analytics. Any logic that scans the trace for a datasource name
+    and takes the first or last one it finds captions that answer "semantic
+    model" - and it does so precisely on the graph questions the demo exists to
+    show. Only analyze.database.execute is authoritative.
+    """
+    got = _trace_source().describe(_ONTOLOGY_RUN)
+    assert got["source"] == "ontology"
+    assert got["sourceName"] == "ONT_Customer360"
+    assert got["queryLanguage"] == "GQL"
+
+
+def test_the_ontology_query_is_unwrapped_down_to_the_gql():
+    """The ontology `code` is a JSON envelope carrying the query, not the query.
+
+    Showing the envelope shows plumbing; showing the MATCH shows the graph.
+    """
+    got = _trace_source().describe(_ONTOLOGY_RUN)
+    assert got["generatedQuery"].startswith("MATCH ")
+    assert "entitySelector" not in got["generatedQuery"]
+    assert "```" not in got["generatedQuery"]
+
+
+def test_a_semantic_model_run_is_reported_as_dax():
+    got = _trace_source().describe(_SEMANTIC_MODEL_RUN)
+    assert got["source"] == "semantic_model"
+    assert got["queryLanguage"] == "DAX"
+    assert got["generatedQuery"].startswith("EVALUATE")
+    assert "```" not in got["generatedQuery"]
+
+
+def test_a_cached_answer_reports_no_source_rather_than_guessing():
+    """No execute call means the source is genuinely unknown.
+
+    The cached answer's trace still carries a datasource name, so guessing is
+    easy and wrong: the Black Friday question replayed from cache while its
+    trace named the semantic model, having originally been answered by the
+    ontology. An empty source is the honest output.
+    """
+    got = _trace_source().describe(_CACHED_RUN)
+    assert got["source"] == ""
+    assert got["generatedQuery"] == ""
+
+
+def test_the_chat_response_exposes_the_source_to_the_front_end():
+    text = (PORTAL / "backend" / "main.py").read_text(encoding="utf-8")
+    for field in ("source:", "sourceName:", "queryLanguage:", "generatedQuery:"):
+        assert field in text, f"ChatResponse must carry {field} for the badge"
+    assert "trace_source.describe" in text, \
+        "the source must be computed, not left for the front end to re-derive"
+
+
+def test_the_answer_is_tied_to_our_own_run_not_to_the_newest_message():
+    """Fabric gives every caller the SAME thread, so the newest answer is not ours.
+
+    Observed 3 Aug 2026: POST /threads returned thread_z2l0nmctAMLMaFU3rDTpnpOq
+    twice in a row, and a brand-new thread already listed 20 messages from earlier
+    portal calls. When our own run then failed, the portal returned the newest
+    assistant message in that shared thread - a confident, well-formed answer about
+    a customer nobody had asked about, with our question's GQL displayed next to it.
+
+    A demo cannot survive answering the wrong question convincingly. Only run_id
+    ties a message to the run we started.
+    """
+    text = (PORTAL / "backend" / "main.py").read_text(encoding="utf-8")
+    assert 'msg.get("run_id") == run_id' in text, \
+        "the assistant message must be selected by run_id, never by recency"
+    assert "await client.delete(f\"{base}/threads/{thread_id}\"" not in text, \
+        "deleting the shared thread would destroy a concurrent run's conversation"
+    assert "run_status" in text, "an incomplete run must be reported, not papered over"

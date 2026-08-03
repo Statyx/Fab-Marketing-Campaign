@@ -18,6 +18,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
+import trace_source
+
 # ── Config ───────────────────────────────────────────────────
 # src/state.json is the source of truth, so the portal can never point at a stale or
 # deleted item. Env vars override it; there are no hardcoded IDs.
@@ -323,6 +325,10 @@ class ChatResponse(BaseModel):
     steps: list[str] = []
     queryTrace: list[ToolTrace] = []
     followUps: list[str] = []
+    source: str = ""            # "ontology" | "semantic_model" | "" when nothing ran
+    sourceName: str = ""        # ONT_Customer360 / SM_Marketing_Analytics
+    queryLanguage: str = ""     # "GQL" | "DAX"
+    generatedQuery: str = ""    # the query the agent actually wrote
 
 
 # ── Persona registry endpoint ────────────────────────────────
@@ -538,13 +544,15 @@ async def agent_chat(agent_key: str, req: ChatRequest):
                 raise HTTPException(502, f"Run creation failed: {run_resp.status_code}")
             run_id = run_resp.json()["id"]
 
+            run_status = ""
             for _ in range(60):                    # up to ~2 min
                 await asyncio.sleep(2)
                 status_resp = await client.get(f"{base}/threads/{thread_id}/runs/{run_id}",
                                                headers=fabric_headers(), params=params)
                 if status_resp.status_code != 200:
                     continue
-                if status_resp.json().get("status") in ("completed", "failed", "cancelled", "expired"):
+                run_status = status_resp.json().get("status", "")
+                if run_status in ("completed", "failed", "cancelled", "expired"):
                     break
 
             msgs_resp = await client.get(f"{base}/threads/{thread_id}/messages",
@@ -552,11 +560,20 @@ async def agent_chat(agent_key: str, req: ChatRequest):
             answer = ""
             if msgs_resp.status_code == 200:
                 for msg in msgs_resp.json().get("data", []):
-                    if msg.get("role") == "assistant":
+                    # Fabric hands EVERY caller the same thread: POST /threads returns
+                    # one shared id, so this list holds other questions' answers too.
+                    # Proven 3 Aug 2026 - two threads created back to back came back as
+                    # thread_z2l0nmctAMLMaFU3rDTpnpOq both times, and a brand-new thread
+                    # already listed 20 messages from earlier portal calls.
+                    # Taking the newest assistant message therefore answers the wrong
+                    # question whenever our own run produced none: a failed run served a
+                    # confident, well-formed answer about a customer nobody had asked
+                    # about. run_id is the only field that ties a message to this run.
+                    if msg.get("role") == "assistant" and msg.get("run_id") == run_id:
                         for content in msg.get("content", []):
                             if content.get("type") == "text":
                                 answer += content["text"].get("value", "")
-                        break                      # newest assistant message only
+                        break
 
             steps, query_trace = [], []
             steps_resp = await client.get(f"{base}/threads/{thread_id}/runs/{run_id}/steps",
@@ -573,17 +590,18 @@ async def agent_chat(agent_key: str, req: ChatRequest):
                                                          output=(fn_obj.get("output", "") or "")[:5000]))
 
             if not answer:
-                raise HTTPException(504, "Agent did not produce an answer")
+                raise HTTPException(504, "L'agent n'a pas produit de réponse pour cette question "
+                                         f"(statut du run : {run_status or 'inconnu'}). Reposez la question.")
 
-            log.warning(f"[{agent_key}] DONE len={len(answer)} steps={steps}")
+            log.warning(f"[{agent_key}] DONE len={len(answer)} status={run_status} steps={steps}")
+            src = trace_source.describe([t.model_dump() for t in query_trace])
             return ChatResponse(answer=answer, steps=steps, queryTrace=query_trace,
-                                followUps=_generate_followups(agent_key, req.message, answer))
+                                followUps=_generate_followups(agent_key, req.message, answer),
+                                **src)
         finally:
-            try:
-                await client.delete(f"{base}/threads/{thread_id}",
-                                    headers=fabric_headers(), params=params)
-            except Exception:
-                pass
+            # No thread delete: POST /threads returns one shared id for every caller,
+            # so this would delete the conversation another persona's run is using.
+            pass
 
 
 # ── Power BI embed (user-owns-data) ──────────────────────────
