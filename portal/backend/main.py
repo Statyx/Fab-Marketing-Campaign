@@ -10,7 +10,7 @@ Uses the OpenAI Assistants API shape exposed by Fabric Data Agents, and
 AzureCliCredential (your `az login`) — no service principal needed.
 """
 
-import os, sys, asyncio, httpx, logging, json, base64, re, threading, time as _time, traceback
+import os, sys, ast, asyncio, httpx, logging, json, base64, re, threading, time as _time, traceback
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -84,13 +84,58 @@ STAGE = os.getenv("AGENT_STAGE", "production")
 API_VERSION = "2024-02-15-preview"
 PBI_BASE = "https://api.powerbi.com/v1.0/myorg"
 
+# ── The graph, read from its own deployer ────────────────────
+# src/deploy_ontology.py is the only source of truth for the shape of the graph.
+# Parsed with ast, deliberately NOT imported: importing the deployer pulls in requests
+# and yaml and runs module-level code, so the portal would fail to start for a reason
+# that has nothing to do with the portal. A copy of the lists here would drift silently
+# the first time an entity is added - and the audience is looking at this panel.
+ONT_NAME = "ONT_Customer360"
+
+
+def _ontology_graph() -> dict:
+    try:
+        tree = ast.parse((_SRC / "deploy_ontology.py").read_text(encoding="utf-8"))
+    except Exception:
+        return {"entities": [], "relationships": []}
+    found: dict[str, list] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            name = getattr(node.targets[0], "id", "")
+            if name in ("ENTITIES", "RELATIONSHIPS"):
+                try:
+                    found[name] = ast.literal_eval(node.value)
+                except Exception:
+                    pass
+    return {
+        "name": ONT_NAME,
+        "id": ONTOLOGY_ID,
+        "entities": [{"name": e[0], "table": e[1], "properties": len(e[3])}
+                     for e in found.get("ENTITIES", [])],
+        "relationships": [{"name": r[0], "from": r[1], "to": r[2]}
+                          for r in found.get("RELATIONSHIPS", [])],
+    }
+
+
+ONT_GRAPH = _ontology_graph()
+
 # ── Persona registry ─────────────────────────────────────────
 # 4 personas, all backed by the single Marketing_Churn_Agent, mapped 1:1 onto the pages
 # of RPT_Marketing_Churn. `reportPages` is matched against the Power BI page displayName
 # by the frontend, so it must stay in sync with deploy_report.py.
 _DS = [{"id": DATASET_ID, "name": SM_NAME,
         "scope": "Churn, engagement email, campagnes, commandes, attribution"}]
+_GR = [{"id": ONTOLOGY_ID, "name": ONT_NAME,
+        "scope": "Qui est relie a quoi : campagne, segment, compte, commande, produit"}]
 _RP = [{"id": REPORT_ID, "name": RPT_NAME}]
+
+# Every suggestion declares the source it is EXPECTED to use, so the audience can see the
+# routing before the question is even sent. "Expected", never "guaranteed": the agent
+# decides its own routing at runtime and the badge under the answer is the only statement
+# of what actually happened. The `ontology` ones are the 8 phrasings that were probed live
+# on 3 Aug 2026 and reached the graph 8/8 - a question that merely *looks* relational is
+# not enough, the first 20 canned questions all looked fine and 0 of them left the model.
+ONT, SEM = "ontology", "model"
 
 AGENTS: dict[str, dict] = {
     "direction": {
@@ -100,17 +145,20 @@ AGENTS: dict[str, dict] = {
         "icon": "🎯",
         "accent": "#00008F",
         "datasets": _DS,
+        "graphs": _GR,
         "reports": _RP,
         "reportPages": ["Direction"],
         "welcome": ("Bonjour, je suis l'assistant de pilotage de la relation client. "
                     "Interrogez-moi sur le chiffre d'affaires, la valeur du portefeuille, "
                     "la part de clients a risque et la sante de la relation."),
         "suggestions": [
-            "Quelle part de la base client est a risque d'attrition ?",
-            "Combien de valeur vie client est exposee au churn ?",
-            "Quel est le chiffre d'affaires total ?",
-            "Quel est le score d'attrition moyen par etape du cycle de vie ?",
-            "Quel est le NPS moyen de la base ?",
+            {"q": "Quelle part de la base client est a risque d'attrition ?", "src": SEM},
+            {"q": "Combien de valeur vie client est exposee au churn ?", "src": SEM},
+            {"q": "Quel est le chiffre d'affaires total ?", "src": SEM},
+            {"q": "Quel est le score d'attrition moyen par etape du cycle de vie ?", "src": SEM},
+            {"q": "Quel est le NPS moyen de la base ?", "src": SEM},
+            {"q": f"Quels comptes B2B regroupent le plus de clients touches par la campagne {CULPRIT} ?",
+             "src": ONT},
         ],
     },
     "retention": {
@@ -120,17 +168,21 @@ AGENTS: dict[str, dict] = {
         "icon": "🛟",
         "accent": "#027180",
         "datasets": _DS,
+        "graphs": _GR,
         "reports": _RP,
         "reportPages": ["Retention"],
         "welcome": ("Bonjour, je suis l'assistant retention. Posez-moi vos questions sur les "
                     "clients a risque, leur recence, leur engagement, leurs desabonnements "
                     "et la friction support."),
         "suggestions": [
-            "Combien de clients sont a risque et pour quelle valeur ?",
-            "Quels clients dois-je rappeler en priorite ?",
-            "Quelle est la recence moyenne des clients a risque ?",
-            "Combien de clients se sont desabonnes des emails ?",
-            "Les interactions support negatives augmentent-elles le risque ?",
+            {"q": "Combien de clients sont a risque et pour quelle valeur ?", "src": SEM},
+            {"q": "Quels clients dois-je rappeler en priorite ?", "src": SEM},
+            {"q": "Quelle est la recence moyenne des clients a risque ?", "src": SEM},
+            {"q": "Combien de clients se sont desabonnes des emails ?", "src": SEM},
+            {"q": "Les interactions support negatives augmentent-elles le risque ?", "src": SEM},
+            {"q": "Quels comptes B2B concentrent le plus d interactions support negatives ?",
+             "src": ONT},
+            {"q": "Quels clients a risque appartiennent au meme compte B2B ?", "src": ONT},
         ],
     },
     "marketing": {
@@ -140,17 +192,23 @@ AGENTS: dict[str, dict] = {
         "icon": "📣",
         "accent": "#896610",
         "datasets": _DS,
+        "graphs": _GR,
         "reports": _RP,
         "reportPages": ["Marketing"],
         "welcome": ("Bonjour, je suis l'assistant marketing. Interrogez-moi sur la pression "
                     "commerciale par campagne, les taux d'ouverture, de clic et de "
                     "desabonnement, et la cause racine de l'attrition."),
         "suggestions": [
-            "Quelle campagne envoie le plus d'emails par client ?",
-            f"Pourquoi la campagne « {CULPRIT} » genere-t-elle autant de desabonnements ?",
-            "Compare les taux d'ouverture entre campagnes",
-            "Quel segment concentre le plus d'envois et quel est son score de churn ?",
-            "Quel est le taux de desabonnement global ?",
+            {"q": "Quelle campagne envoie le plus d'emails par client ?", "src": SEM},
+            {"q": f"Pourquoi la campagne « {CULPRIT} » genere-t-elle autant de desabonnements ?",
+             "src": SEM},
+            {"q": "Compare les taux d'ouverture entre campagnes", "src": SEM},
+            {"q": "Quel est le taux de desabonnement global ?", "src": SEM},
+            {"q": "Quel segment concentre le plus d'envois et quel est son score de churn ?",
+             "src": SEM},
+            {"q": f"Quels segments la campagne {CULPRIT} ciblait-elle et quels segments "
+                  f"a-t-elle reellement touches ?", "src": ONT},
+            {"q": f"Quels objets d email ont ete utilises par la campagne {CULPRIT} ?", "src": ONT},
         ],
     },
     "commerce": {
@@ -160,17 +218,21 @@ AGENTS: dict[str, dict] = {
         "icon": "🛒",
         "accent": "#863C41",
         "datasets": _DS,
+        "graphs": _GR,
         "reports": _RP,
         "reportPages": ["Commerce"],
         "welcome": ("Bonjour, je suis l'assistant commerce. Posez-moi vos questions sur le "
                     "chiffre d'affaires, le panier moyen, les categories de produits, "
                     "l'attribution des campagnes et les retours."),
         "suggestions": [
-            "Quelle categorie de produit genere le plus de chiffre d'affaires ?",
-            "Quel est le panier moyen par canal de vente ?",
-            "Quelle part du chiffre d'affaires est attribuee aux campagnes ?",
-            "Quel est le ROI des campagnes ?",
-            "Quels sont les principaux motifs de retour ?",
+            {"q": "Quelle categorie de produit genere le plus de chiffre d'affaires ?", "src": SEM},
+            {"q": "Quel est le panier moyen par canal de vente ?", "src": SEM},
+            {"q": "Quelle part du chiffre d'affaires est attribuee aux campagnes ?", "src": SEM},
+            {"q": "Quels sont les principaux motifs de retour ?", "src": SEM},
+            {"q": f"Quels produits ont ete achetes par les clients touches par {CULPRIT} ?",
+             "src": ONT},
+            {"q": "Quelles categories de produits les clients du segment High Value achetent-ils ?",
+             "src": ONT},
         ],
     },
 }
@@ -359,9 +421,11 @@ async def list_agents():
     for key, cfg in AGENTS.items():
         out[key] = {"name": cfg["name"], "description": cfg["description"],
                     "icon": cfg["icon"], "accent": cfg["accent"], "agentId": cfg["id"],
-                    "datasets": cfg.get("datasets", []), "reports": cfg.get("reports", []),
+                    "datasets": cfg.get("datasets", []), "graphs": cfg.get("graphs", []),
+                    "reports": cfg.get("reports", []),
                     "reportPages": cfg["reportPages"], "suggestions": cfg["suggestions"],
                     "welcome": cfg.get("welcome", "")}
+    out["_meta"]["graph"] = ONT_GRAPH
     return out
 
 

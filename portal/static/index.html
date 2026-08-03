@@ -364,6 +364,12 @@ body {
 .source-legend b { font-weight: 700; }
 .source-legend .sl-model    { color: #1B5E9E; }
 .source-legend .sl-ontology { color: #6B21A8; }
+.graph-open {
+  margin-left: auto; background: rgba(138,43,226,0.10); border: 1px solid rgba(138,43,226,0.32);
+  color: #6B21A8; font-family: inherit; font-size: 11px; font-weight: 700;
+  padding: 4px 10px; border-radius: 999px; cursor: pointer; transition: all 0.2s;
+}
+.graph-open:hover { background: rgba(138,43,226,0.18); }
 
 /* ═══════════════ QUERY INSPECTOR ═══════════════ */
 .query-toggle {
@@ -613,6 +619,15 @@ body {
   border-color: var(--accent); color: var(--accent-dark);
   background: var(--accent-soft); box-shadow: var(--shadow-md); transform: translateY(-1px);
 }
+/* Predictive source pill. Colours match the badge under the answer on purpose: the
+   audience learns one colour code, purple = graph, blue = model, and can then read the
+   answer badge as confirmation or as a surprise. */
+.sug-src {
+  font-style: normal; margin-right: 6px; font-size: 11px;
+  padding: 1px 5px; border-radius: 6px; border: 1px solid transparent;
+}
+.sug-src.sug-ont { background: rgba(138,43,226,0.12); border-color: rgba(138,43,226,0.30); }
+.sug-src.sug-sem { background: rgba(0,120,212,0.10);  border-color: rgba(0,120,212,0.26); }
 
 .chat-input {
   padding: 14px 20px; border-top: 1px solid var(--border); display: flex; gap: 8px;
@@ -790,6 +805,27 @@ body {
 </div>
 
 <!-- ═══════════════ MCP CONNECT MODAL ═══════════════ -->
+<div class="modal-overlay" id="graphModal" onclick="if(event.target===this)closeGraphModal()">
+  <div class="modal-card">
+    <div class="modal-header">
+      <div>
+        <h3>&#128376; ONT_Customer360 &mdash; l&rsquo;ontologie</h3>
+        <div class="modal-sub" id="graphModalSub"></div>
+      </div>
+      <button class="modal-close" onclick="closeGraphModal()" title="Fermer">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p class="hint">Le mod&egrave;le s&eacute;mantique r&eacute;pond aux <b>chiffres</b>. L&rsquo;ontologie r&eacute;pond aux <b>liens</b>&nbsp;: qui a re&ccedil;u quoi, qui appartient &agrave; quel compte, quel objet d&rsquo;e-mail a men&eacute; &agrave; quelle commande. Chaque entit&eacute; est une table du lakehouse, chaque relation est une jointure port&eacute;e par le graphe et interrogeable en GQL.</p>
+      <div id="graphSvg"></div>
+      <div id="graphLists"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="modal-btn secondary" onclick="closeGraphModal()">Fermer</button>
+      <button class="modal-btn" onclick="openGraphInFabric()">Ouvrir dans Fabric</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="mcpModal" onclick="if(event.target===this)closeMcpModal()">
   <div class="modal-card">
     <div class="modal-header">
@@ -977,8 +1013,19 @@ function ensureCtx(key){
   if(document.getElementById('ctx-'+key))return;
   var cfg=agents[key],ctx=document.createElement('div');
   ctx.className='agent-context';ctx.id='ctx-'+key;
+  /* A suggestion may be a plain string (older shape) or {q, src}. The pill states the
+     source the question is EXPECTED to take, so the room can see the routing before the
+     answer arrives - the badge under the answer remains the only record of what actually
+     happened, which is why the tooltip says "attendue" and never "garantie". The question
+     goes in data-q: reading btn.textContent would now pick up the pill glyph too. */
   var sugHtml=cfg.suggestions.map(function(s){
-    return '<button onclick="useSug(\''+key+'\',this)">'+escHtml(s)+'</button>';
+    var q=(typeof s==='string')?s:s.q, src=(typeof s==='string')?'':(s.src||'');
+    var pill=src==='ontology'
+      ? '<i class="sug-src sug-ont" title="R&eacute;ponse attendue via l&rsquo;ontologie (graphe, GQL)">&#128376;</i>'
+      : (src==='model'
+         ? '<i class="sug-src sug-sem" title="R&eacute;ponse attendue via le mod&egrave;le s&eacute;mantique (DAX)">&#128202;</i>'
+         : '');
+    return '<button data-q="'+escHtml(q)+'" onclick="useSug(\''+key+'\',this)">'+pill+escHtml(q)+'</button>';
   }).join('');
   ctx.innerHTML=
     '<div class="chat-panel" id="chat-'+key+'">'+
@@ -990,9 +1037,10 @@ function ensureCtx(key){
         '<div class="msg-time">'+timeNow()+'</div></div></div></div>'+
       '<div class="suggestions" id="sug-'+key+'">'+sugHtml+'</div>'+
       '<div class="source-legend">'+
-        '<span>Chaque r&eacute;ponse indique sa source&nbsp;:</span>'+
+        '<span>La pastille annonce la source <em>attendue</em>, le badge sous la r&eacute;ponse dit la source <em>r&eacute;ellement</em> utilis&eacute;e&nbsp;:</span>'+
         '<span class="sl-model"><b>&#128202; Mod&egrave;le s&eacute;mantique</b> &mdash; un chiffre (DAX)</span>'+
         '<span class="sl-ontology"><b>&#128376; Ontologie</b> &mdash; une relation, un chemin, une cause (GQL)</span>'+
+        '<button class="graph-open" onclick="openGraphModal()" title="Voir les entit&eacute;s et les relations du graphe">&#128376; Voir le graphe</button>'+
       '</div>'+
       '<div class="chat-input"><input type="text" id="input-'+key+'" placeholder="Posez votre question à '+escHtml(cfg.name)+'\u2026" onkeydown="if(event.key===\'Enter\')sendMsg(\''+key+'\')">'+
         '<button onclick="sendMsg(\''+key+'\')" id="send-'+key+'">&#10148;</button></div>'+
@@ -1112,7 +1160,9 @@ function showTyping(key){
   c.appendChild(div);c.scrollTop=c.scrollHeight;
 }
 function hideTyping(key){var el=document.getElementById('typing-'+key);if(el)el.remove();}
-function useSug(key,btn){document.getElementById('input-'+key).value=btn.textContent;sendMsg(key);}
+/* data-q, not textContent: the button now also contains the source pill, and sending
+   its glyph to the agent would corrupt the question. Falls back for safety. */
+function useSug(key,btn){document.getElementById('input-'+key).value=btn.getAttribute('data-q')||btn.textContent;sendMsg(key);}
 
 async function sendMsg(key){
   var input=document.getElementById('input-'+key),q=input.value.trim();
@@ -1326,6 +1376,7 @@ function replayFromHistory(agentKey,entryId){
 function buildMcpPayload(key){
   var cfg=agents[key];var m=fabricMeta();
   var ds=(cfg.datasets&&cfg.datasets[0])||{};
+  var gr=(cfg.graphs&&cfg.graphs[0])||{};
   var rep=(cfg.reports&&cfg.reports[0])||{};
   return {
     name:'fabric-'+key,
@@ -1335,6 +1386,7 @@ function buildMcpPayload(key){
     workspaceId:m.workspaceId,
     agentId:cfg.agentId,
     semanticModel:{id:ds.id||null,name:ds.name||null,scope:ds.scope||null},
+    ontology:{id:gr.id||null,name:gr.name||null,scope:gr.scope||null},
     report:{id:rep.id||null,name:rep.name||null},
     endpoint:'https://api.fabric.microsoft.com/v1/workspaces/'+m.workspaceId+
              '/dataAgents/'+cfg.agentId+'/aiassistant/openai',
@@ -1391,8 +1443,75 @@ function buildPermissionsBlock(p){
     '- "Allow service principals to use Power BI APIs" (for embed)\n';
 }
 var _mcpCurrent=null;
-function openMcpModal(key){
-  _mcpCurrent=key;
+/* ═══════════════ THE GRAPH ═══════════════
+   Drawn from /api/agents _meta.graph, which the backend parses out of
+   src/deploy_ontology.py. Nothing here is hardcoded: add an entity to the deployer and
+   it appears in this diagram, which is the whole point - a picture that can disagree
+   with the deployed graph is worse than no picture. Circular layout because it is the
+   only one that stays readable without knowing the node count in advance. */
+function graphData(){var m=(agents&&agents._meta)||{};return m.graph||{entities:[],relationships:[]};}
+
+function buildGraphSvg(g){
+  var ents=g.entities||[],rels=g.relationships||[];
+  if(!ents.length)return '<p class="hint">Graphe indisponible.</p>';
+  var W=760,H=420,cx=W/2,cy=H/2,rx=W/2-110,ry=H/2-58,pos={};
+  ents.forEach(function(e,i){
+    var a=-Math.PI/2+2*Math.PI*i/ents.length;
+    pos[e.name]={x:cx+rx*Math.cos(a),y:cy+ry*Math.sin(a)};
+  });
+  var edges=rels.map(function(r){
+    var a=pos[r.from],b=pos[r.to];
+    if(!a||!b)return '';
+    var mx=(a.x+b.x)/2,my=(a.y+b.y)/2;
+    return '<line x1="'+a.x+'" y1="'+a.y+'" x2="'+b.x+'" y2="'+b.y+'" '+
+           'stroke="rgba(138,43,226,0.35)" stroke-width="1.4" marker-end="url(#gArrow)"/>'+
+           '<text x="'+mx+'" y="'+(my-4)+'" text-anchor="middle" font-size="8.5" '+
+           'fill="#6B21A8" opacity="0.85">'+escHtml(r.name)+'</text>';
+  }).join('');
+  var nodes=ents.map(function(e){
+    var p=pos[e.name],w=Math.max(74,e.name.length*8+22);
+    return '<g><rect x="'+(p.x-w/2)+'" y="'+(p.y-15)+'" width="'+w+'" height="30" rx="15" '+
+           'fill="rgba(138,43,226,0.10)" stroke="rgba(138,43,226,0.45)"/>'+
+           '<text x="'+p.x+'" y="'+(p.y+4)+'" text-anchor="middle" font-size="11.5" '+
+           'font-weight="600" fill="#4C1D95">'+escHtml(e.name)+'</text></g>';
+  }).join('');
+  return '<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:auto;">'+
+    '<defs><marker id="gArrow" viewBox="0 0 10 10" refX="26" refY="5" markerWidth="6" '+
+    'markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="rgba(138,43,226,0.5)"/>'+
+    '</marker></defs>'+edges+nodes+'</svg>';
+}
+
+function buildGraphLists(g){
+  var ents=(g.entities||[]).map(function(e){
+    return '<li><b>'+escHtml(e.name)+'</b> <span class="hint">&larr; '+escHtml(e.table)+
+           ' &middot; '+e.properties+' propri&eacute;t&eacute;s</span></li>';
+  }).join('');
+  var rels=(g.relationships||[]).map(function(r){
+    return '<li><b>'+escHtml(r.from)+'</b> &mdash;<em>'+escHtml(r.name)+'</em>&rarr; <b>'+
+           escHtml(r.to)+'</b></li>';
+  }).join('');
+  return '<div style="display:flex;gap:24px;flex-wrap:wrap;margin-top:12px;">'+
+    '<div style="flex:1;min-width:240px;"><p class="hint"><b>Entit&eacute;s</b></p><ul style="font-size:12px;line-height:1.8;padding-left:18px;">'+ents+'</ul></div>'+
+    '<div style="flex:1;min-width:240px;"><p class="hint"><b>Relations</b></p><ul style="font-size:12px;line-height:1.8;padding-left:18px;">'+rels+'</ul></div>'+
+    '</div>';
+}
+
+function openGraphModal(){
+  var g=graphData();
+  document.getElementById('graphModalSub').textContent=
+    (g.entities||[]).length+' entités · '+(g.relationships||[]).length+' relations · interrogeable en GQL';
+  document.getElementById('graphSvg').innerHTML=buildGraphSvg(g);
+  document.getElementById('graphLists').innerHTML=buildGraphLists(g);
+  document.getElementById('graphModal').classList.add('open');
+}
+function closeGraphModal(){document.getElementById('graphModal').classList.remove('open');}
+function openGraphInFabric(){
+  var m=fabricMeta(),g=graphData();
+  if(!m.workspaceId||!g.id)return;
+  window.open('https://app.fabric.microsoft.com/groups/'+m.workspaceId+'/ontologies/'+g.id,'_blank');
+}
+
+function openMcpModal(key){  _mcpCurrent=key;
   var cfg=agents[key];if(!cfg)return;
   var p=buildMcpPayload(key);
   document.getElementById('mcpModalTitle').textContent='MCP Connect — '+cfg.name;

@@ -207,6 +207,7 @@ def _portal_agents():
     azure-identity, which the test environment has no reason to install.
     """
     tree = ast.parse((PORTAL / "backend" / "main.py").read_text(encoding="utf-8"))
+    consts = _module_constants(tree)
     node = next(n for n in tree.body
                 if isinstance(n, (ast.Assign, ast.AnnAssign))
                 and "AGENTS" in ast.dump(n.targets[0] if isinstance(n, ast.Assign) else n.target))
@@ -219,16 +220,52 @@ def _portal_agents():
             except ValueError:
                 # A list holding an f-string (the culprit-campaign suggestion) is not a
                 # literal as a whole — keep the elements so counts stay meaningful.
-                fields[fk.value] = [_lit_or_dynamic(e) for e in fv.elts] \
+                fields[fk.value] = [_lit_or_dynamic(e, consts) for e in fv.elts] \
                     if isinstance(fv, ast.List) else "<dynamic>"
         out[k.value] = fields
     return out
 
 
-def _lit_or_dynamic(node):
+def _module_constants(tree) -> dict:
+    """Module-level NAME = "literal" assignments, so the parser can resolve them.
+
+    main.py writes `"src": ONT` rather than `"src": "ontology"` because a symbol is
+    checkable by a linter and a repeated string literal is not. ast.literal_eval cannot
+    follow a Name, so without this the parser reads every src as "<dynamic>" and the
+    suggestion guards silently pass on nothing.
+    """
+    consts = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and isinstance(node.value, ast.Constant):
+                    consts[target.id] = node.value.value
+        # ONT, SEM = "ontology", "model"
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Tuple):
+            for target in node.targets:
+                if isinstance(target, ast.Tuple):
+                    for name, value in zip(target.elts, node.value.elts):
+                        if isinstance(name, ast.Name) and isinstance(value, ast.Constant):
+                            consts[name.id] = value.value
+    return consts
+
+
+def _lit_or_dynamic(node, consts=None):
+    if isinstance(node, ast.Name) and consts and node.id in consts:
+        return consts[node.id]
     try:
         return ast.literal_eval(node)
     except ValueError:
+        # A suggestion is a dict {"q": ..., "src": ...} and `q` may be an f-string on the
+        # culprit campaign, which is not a literal. Losing the whole dict would also lose
+        # `src`, and `src` is exactly what the suggestion guards are about - so descend
+        # one level and keep every key that IS a literal.
+        if isinstance(node, ast.Dict):
+            out = {}
+            for k, v in zip(node.keys, node.values):
+                if isinstance(k, ast.Constant):
+                    out[k.value] = _lit_or_dynamic(v, consts)
+            return out
         return "<dynamic>"
 
 
@@ -1560,3 +1597,108 @@ def test_the_agent_retries_a_query_the_capacity_throttled():
             f"ontology_only={ontology_only}: recognising it is useless without retrying")
         assert "not that the information is unavailable" in text, (
             f"ontology_only={ontology_only}: a throttle must never be reported as missing data")
+
+
+# ── The graph must be VISIBLE in the portal ──────────────────────────────────
+# Asked for on 3 Aug 2026: "il faut plus d'elements sur l'ontologie car le semantic
+# model tout le monde connait". Before this, the portal declared one source (the
+# semantic model), and 0 of its 20 canned questions ever reached the graph - so a demo
+# could run start to finish without the audience seeing that a graph existed at all.
+
+# The only phrasings PROVEN to reach the ontology, probed live on 3 Aug 2026 (8/8
+# routed to GQL). A question that merely looks relational is not evidence: the first 20
+# canned questions all looked reasonable and 0 of them left the semantic model. Adding a
+# suggestion here without probing it is exactly the mistake this list exists to prevent.
+_PROBED_ONTOLOGY_QUESTIONS = [
+    "Quels comptes B2B regroupent le plus de clients touches par la campagne",
+    "Quels clients ont recu a la fois",
+    "ciblait-elle et quels segments a-t-elle reellement touches",
+    "Quels objets d email ont ete utilises par la campagne",
+    "Quels produits ont ete achetes par les clients touches par",
+    "Quelles categories de produits les clients du segment High Value achetent-ils",
+    "Quels comptes B2B concentrent le plus d interactions support negatives",
+    "Quels clients a risque appartiennent au meme compte B2B",
+]
+
+
+def _suggestion_text(s):
+    """A suggestion is {"q": ..., "src": ...}; `q` may be dynamic (f-string on CULPRIT)."""
+    if isinstance(s, dict):
+        return s.get("q", "")
+    return s if isinstance(s, str) else ""
+
+
+def test_every_persona_offers_at_least_one_graph_question():
+    for key, a in _portal_agents().items():
+        sugs = a.get("suggestions", [])
+        assert sugs, f"persona '{key}' has no suggestions"
+        graph = [s for s in sugs if isinstance(s, dict) and s.get("src") == "ontology"]
+        assert graph, (
+            f"persona '{key}' offers no ontology question: a visitor can walk the whole "
+            f"persona without the graph ever being used")
+
+
+def test_a_suggestion_declares_a_source_the_portal_can_render():
+    for key, a in _portal_agents().items():
+        for s in a.get("suggestions", []):
+            assert isinstance(s, dict), f"{key}: suggestion must be a dict, got {type(s).__name__}"
+            assert s.get("src") in ("ontology", "model"), (
+                f"{key}: suggestion src={s.get('src')!r} - the frontend only renders "
+                f"'ontology' and 'model', anything else silently loses its pill")
+            assert s.get("q"), f"{key}: suggestion has no question text"
+
+
+def test_a_question_announced_as_graph_was_actually_probed_as_graph():
+    """The pill is a promise made before the answer arrives - it must be evidence-based.
+
+    The portal announces the expected source under every suggestion. Announcing the
+    ontology for a question that in fact routes to the semantic model is worse than
+    announcing nothing: on stage the badge under the answer will contradict the pill,
+    live, in front of the customer.
+    """
+    for key, a in _portal_agents().items():
+        for s in a.get("suggestions", []):
+            if not (isinstance(s, dict) and s.get("src") == "ontology"):
+                continue
+            text = _suggestion_text(s)
+            if text == "<dynamic>":
+                continue
+            assert any(p in text for p in _PROBED_ONTOLOGY_QUESTIONS), (
+                f"{key}: '{text}' is announced as a graph question but is not one of the "
+                f"phrasings probed live - probe it first, or label it 'model'")
+
+
+def test_the_portal_graph_map_is_read_from_the_deployer():
+    """The picture the audience looks at must be generated by the graph that is deployed.
+
+    A hand-maintained copy of the entity list in the portal would keep rendering the old
+    graph the day an entity is added to deploy_ontology.py, and nothing would fail. So
+    main.py parses the deployer, and this test proves the parse actually resolves.
+    """
+    main_src = (PORTAL / "backend" / "main.py").read_text(encoding="utf-8")
+    assert "deploy_ontology.py" in main_src, (
+        "the portal must read the graph from its deployer, not hold a copy")
+
+    ns: dict = {}
+    tree = ast.parse(main_src)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "_ontology_graph":
+            ns["found"] = True
+    assert ns.get("found"), "_ontology_graph() disappeared - the graph panel would be empty"
+
+    ont = _ontology_module()
+    entities = {e[0] for e in ont.ENTITIES}
+    relationships = {r[0] for r in ont.RELATIONSHIPS}
+    assert len(entities) >= 8 and len(relationships) >= 9, (
+        "the graph shrank - check deploy_ontology.py before the demo")
+
+
+def test_the_suggestion_button_sends_the_question_not_its_pill():
+    """The pill glyph lives inside the button, so textContent is no longer the question.
+
+    Reading btn.textContent would send "&#128376;Quels comptes B2B..." to the agent.
+    """
+    html = (PORTAL / "static" / "index.html").read_text(encoding="utf-8")
+    assert "data-q=" in html, "the suggestion button must carry its question in data-q"
+    assert "getAttribute('data-q')" in html, (
+        "useSug must read data-q; textContent now includes the source pill")
