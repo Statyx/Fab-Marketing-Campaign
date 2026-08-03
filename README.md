@@ -1,4 +1,4 @@
-# Fab-Marketing-Campaign
+# Marketing Campaign — Customer 360 & Churn
 
 > **Customer 360 + churn analytics on Microsoft Fabric** — CRM · Marketing · Commerce,
 > with a churn signal that is **derived from behaviour**, not invented.
