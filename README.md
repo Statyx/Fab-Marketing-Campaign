@@ -7,7 +7,8 @@
 ![Deploy](https://img.shields.io/badge/deploy-idempotent_(state.json)-blue?style=for-the-badge)
 ![Tests](https://img.shields.io/badge/tests-54_passing-brightgreen?style=for-the-badge)
 
-**Workspace**: `CDR - Marketing Campaign`
+
+
 
 ---
 
@@ -34,6 +35,11 @@ dataset (buyers only, `seed=42`):
 The generator simulates behaviour first — sends, opens, clicks, unsubscribes, orders, support
 tickets — and only then derives churn, CLV and lifecycle from it. The test suite fails the build if
 that stops being true.
+
+
+<img width="2548" height="1266" alt="image" src="https://github.com/user-attachments/assets/62775a56-8db1-4e8c-83f1-f4fc42f137d4" />
+<img width="2548" height="1266" alt="image" src="https://github.com/user-attachments/assets/8d0033cb-399a-4606-8992-63dcb1e8e338" />
+<img width="1788" height="992" alt="image" src="https://github.com/user-attachments/assets/3389678e-07b1-4b97-91f2-31086261afab" />
 
 ---
 
