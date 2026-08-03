@@ -333,7 +333,8 @@ SM_FEWSHOTS = [
 ]
 
 
-def ai_instructions(ontology_only: bool, culprit_name: str, at_risk: int) -> str:
+def ai_instructions(ontology_only: bool, culprit_name: str, at_risk: int,
+                    segment_names: str = "") -> str:
     # Shared between both branches on purpose. Instruction text lands in the tenant,
     # so wording that differs between call sites flips the live agent's behaviour on
     # every alternating deploy, invisibly.
@@ -364,6 +365,36 @@ def ai_instructions(ontology_only: bool, culprit_name: str, at_risk: int) -> str
         "you say the source is temporarily busy, and then say exactly that: the service is busy,\n"
         "not that the information is unavailable or does not exist.\n\n"
     )
+    # An empty result from a mis-spelled literal is indistinguishable from a real finding.
+    # 3 Aug 2026: three follow-up questions answered "aucun client a risque" while filtering
+    # LOWER(lifecycle_stage) = LOWER("at risk") - the stored value is at_risk. A fourth
+    # answered on the SEGMENT named "At Risk" instead of the lifecycle state, silently. And
+    # a fifth invented interaction_type = "support" because the QUESTION said "support" -
+    # the generator only writes call/email/chat/ticket/meeting. Same failure, three columns:
+    # the model borrows a word from the question and treats it as data. So the domain is
+    # stated outright, and the segment names come from config.yaml so they cannot drift.
+    vocabulary_rule = (
+        "## Exact values of the graph's enumerations - do NOT guess a spelling\n"
+        "Customer.`lifecycle_stage` is one of: lead, prospect, active, at_risk, churned.\n"
+        "It is written with an UNDERSCORE: at_risk. 'at risk', 'At Risk', 'a risque' match\n"
+        "nothing and return an empty result, which is NOT the same as 'there are none'.\n"
+        "Customer.`customer_type` is B2B or B2C. Customer.`status` is active or churned.\n"
+        f"Segment.`segment_name` is one of: {segment_names}.\n"
+        "Interaction.`interaction_type` is one of: call, email, chat, ticket, meeting.\n"
+        "There is NO value 'support' - the whole Interaction entity IS customer support, so a\n"
+        "question about 'support interactions' means ALL interactions: do not filter the type.\n"
+        "Interaction.`sentiment` is negative, neutral or positive. Interaction.`is_resolved`\n"
+        "is a boolean. Interaction.`channel` is one of: phone, email, web, store.\n"
+        "Never invent a value because it appears in the question - only the values listed\n"
+        "here exist in the data.\n"
+        "CAREFUL - 'customers at risk' is ambiguous and the two readings are different sets:\n"
+        "- the lifecycle state -> WHERE cu.`lifecycle_stage` = 'at_risk'   <- use this by default\n"
+        "- the marketing segment named 'At Risk' -> traverse CustomerInSegment to Segment.\n"
+        "Say which of the two you used. Never filter `customer_type` for a risk state - that\n"
+        "column holds B2B/B2C and the query will return nothing.\n"
+        "If a filter on an enumeration returns zero rows, re-run it once without the filter to\n"
+        "check the spelling before reporting that nothing was found.\n\n"
+    )
     head = (
         "You are the Marketing Churn Agent for a retailer. You answer questions about customers, "
         "segments, campaigns, orders and CHURN RISK. ALWAYS answer by querying a source - NEVER "
@@ -381,7 +412,7 @@ def ai_instructions(ontology_only: bool, culprit_name: str, at_risk: int) -> str
             "Root cause for a customer: traverse that edge in reverse.\n\n"
             "NOTE: the churn profile (churn_risk_score, clv_eur, engagement_rate) is NOT in this "
             "graph. If asked for it, say the data is not available in this source.\n\n"
-            + payload_rule + throttle_rule +
+            + payload_rule + throttle_rule + vocabulary_rule +
             "## CRITICAL - results are truncated at 200 rows\n"
             "NEVER answer a 'how many' or 'how much' question by counting or summing the rows you "
             "received: the list is capped at 200 and the number would be wrong. Push the aggregate "
@@ -414,7 +445,7 @@ def ai_instructions(ontology_only: bool, culprit_name: str, at_risk: int) -> str
         "HOW things connect or WHO is affected -> Ontology (GQL).\n"
         "For 'detect then diagnose' questions: get the figure from the semantic model, then\n"
         "traverse the graph from the offending campaign for the impacted customers.\n\n"
-        + payload_rule + throttle_rule +
+        + payload_rule + throttle_rule + vocabulary_rule +
         "## Ontology results are truncated at 200 rows\n"
         "NEVER derive a count or a total by counting/summing the rows a GQL query returned - the\n"
         "list is capped at 200 and the figure would be wrong. Numbers come from the semantic model.\n"
@@ -474,12 +505,13 @@ def find_agent(api, ws, h, name):
     return None
 
 
-def build_parts(ws, ont_id, ont_name, sm_id, sm_name, agent_name, ontology_only, culprit, at_risk):
+def build_parts(ws, ont_id, ont_name, sm_id, sm_name, agent_name, ontology_only, culprit, at_risk,
+                segment_names=""):
     ont_folder = f"ontology-{ont_name}"
     sm_folder = f"semantic-model-{sm_name}"
     data_agent = {"$schema": f"{SCH}/dataAgent/2.1.0/schema.json"}
     stage = {"$schema": f"{SCH}/stageConfiguration/1.0.0/schema.json",
-             "aiInstructions": ai_instructions(ontology_only, culprit, at_risk)}
+             "aiInstructions": ai_instructions(ontology_only, culprit, at_risk, segment_names)}
 
     ont_ds = {
         "$schema": f"{SCH}/dataSource/1.0.0/schema.json",
@@ -569,7 +601,8 @@ def main():
     mode = "ONTOLOGY-ONLY (experiment)" if args.ontology_only else "DUAL-SOURCE"
     print_step(1, 3, f"Create/Update Data Agent '{name}' — {mode}")
     parts = build_parts(ws, ont_id, ont_name, sm_id, sm_name, name,
-                        args.ontology_only, culprit, at_risk)
+                        args.ontology_only, culprit, at_risk,
+                        ", ".join(s["name"] for s in cfg.get("segments", []) if s.get("name")))
     aid = st.get("data_agent_id") or find_agent(api, ws, h, name)
     if aid:
         print(f"   updating: {aid}  ({len(parts)} parts)")

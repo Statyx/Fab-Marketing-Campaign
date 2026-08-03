@@ -1018,15 +1018,7 @@ function ensureCtx(key){
      answer arrives - the badge under the answer remains the only record of what actually
      happened, which is why the tooltip says "attendue" and never "garantie". The question
      goes in data-q: reading btn.textContent would now pick up the pill glyph too. */
-  var sugHtml=cfg.suggestions.map(function(s){
-    var q=(typeof s==='string')?s:s.q, src=(typeof s==='string')?'':(s.src||'');
-    var pill=src==='ontology'
-      ? '<i class="sug-src sug-ont" title="R&eacute;ponse attendue via l&rsquo;ontologie (graphe, GQL)">&#128376;</i>'
-      : (src==='model'
-         ? '<i class="sug-src sug-sem" title="R&eacute;ponse attendue via le mod&egrave;le s&eacute;mantique (DAX)">&#128202;</i>'
-         : '');
-    return '<button data-q="'+escHtml(q)+'" onclick="useSug(\''+key+'\',this)">'+pill+escHtml(q)+'</button>';
-  }).join('');
+  var sugHtml=cfg.suggestions.map(function(s){return sugBtnHtml(key,s);}).join('');
   ctx.innerHTML=
     '<div class="chat-panel" id="chat-'+key+'">'+
       '<div class="chat-messages" id="msgs-'+key+'">'+
@@ -1164,6 +1156,24 @@ function hideTyping(key){var el=document.getElementById('typing-'+key);if(el)el.
    its glyph to the agent would corrupt the question. Falls back for safety. */
 function useSug(key,btn){document.getElementById('input-'+key).value=btn.getAttribute('data-q')||btn.textContent;sendMsg(key);}
 
+/* escHtml() goes through textContent, which leaves " and ' untouched - fine inside an
+   element, wrong inside an attribute. data-q holds the question verbatim, so it needs
+   the quote-safe variant or a single apostrophe silently truncates the question sent. */
+function escAttr(s){return escHtml(s).replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+
+/* ONE renderer for opening suggestions AND follow-ups.
+   They were two code paths and only the first grew a pill, so the second wave of
+   buttons dropped the colour code exactly when the audience had just learnt it. */
+function sugBtnHtml(key,s){
+  var q=(typeof s==='string')?s:s.q, src=(typeof s==='string')?'':(s.src||'');
+  var pill=src==='ontology'
+    ? '<i class="sug-src sug-ont" title="R&eacute;ponse attendue via l&rsquo;ontologie (graphe, GQL)">&#128376;</i>'
+    : (src==='model'
+       ? '<i class="sug-src sug-sem" title="R&eacute;ponse attendue via le mod&egrave;le s&eacute;mantique (DAX)">&#128202;</i>'
+       : '');
+  return '<button data-q="'+escAttr(q)+'" onclick="useSug(\''+key+'\',this)">'+pill+escHtml(q)+'</button>';
+}
+
 async function sendMsg(key){
   var input=document.getElementById('input-'+key),q=input.value.trim();
   if(!q)return;input.value='';
@@ -1177,9 +1187,7 @@ async function sendMsg(key){
     saveToHistory(key,q,d);
     var sugBox=document.getElementById('sug-'+key);
     if(d.followUps && d.followUps.length>0){
-      sugBox.innerHTML=d.followUps.map(function(s){
-        return '<button onclick="useSug(\''+key+'\',this)">'+escHtml(s)+'</button>';
-      }).join('');
+      sugBox.innerHTML=d.followUps.map(function(s){return sugBtnHtml(key,s);}).join('');
       sugBox.style.display='flex';
     }
   }catch(e){hideTyping(key);addMsg(key,'assistant','&#10060; Error: '+escHtml(e.message));}

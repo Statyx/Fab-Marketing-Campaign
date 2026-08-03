@@ -266,6 +266,12 @@ def _lit_or_dynamic(node, consts=None):
                 if isinstance(k, ast.Constant):
                     out[k.value] = _lit_or_dynamic(v, consts)
             return out
+        # Same reasoning one level up: a list of follow-ups where a single `q` is an
+        # f-string is not a literal, so literal_eval throws and the WHOLE list would
+        # read as "<dynamic>". The follow-up guards would then pass on nothing - the
+        # exact silent-pass this helper was written to stop.
+        if isinstance(node, (ast.List, ast.Tuple)):
+            return [_lit_or_dynamic(e, consts) for e in node.elts]
         return "<dynamic>"
 
 
@@ -1599,6 +1605,79 @@ def test_the_agent_retries_a_query_the_capacity_throttled():
             f"ontology_only={ontology_only}: a throttle must never be reported as missing data")
 
 
+def test_the_agent_knows_the_exact_spelling_of_at_risk():
+    """An empty result from a mis-spelled literal looks exactly like "there are none".
+
+    3 Aug 2026, probing the follow-up questions: three of eight came back "aucun compte
+    B2B n'a de clients a risque". The GQL was valid, the traversal correct, and the
+    filter read `LOWER(cu.lifecycle_stage) = LOWER("at risk")` while the stored value is
+    `at_risk`. The demo's churn questions are exactly the ones that break, and they break
+    silently - the agent reports an empty set as a finding.
+
+    The same session also showed the ambiguity is real: a fourth question answered on the
+    SEGMENT named "At Risk" instead of the lifecycle state, and nothing said so.
+
+    Guarded in both branches: instruction text is tenant state, and a rule present at one
+    call site and absent at the other flips the live agent on alternating deploys.
+    """
+    agent = _agent_module()
+    for ontology_only in (True, False):
+        text = agent.ai_instructions(ontology_only, "Black Friday Blast", 317, "High Value, At Risk")
+        assert "at_risk" in text, (
+            f"ontology_only={ontology_only}: the exact lifecycle value must be stated")
+        assert "UNDERSCORE" in text or "underscore" in text, (
+            f"ontology_only={ontology_only}: 'at risk' vs 'at_risk' is the whole bug - "
+            f"listing the value without calling out the spelling invites the same guess")
+        assert "ambiguous" in text.lower(), (
+            f"ontology_only={ontology_only}: 'at risk' is both a lifecycle state and a "
+            f"segment name; unresolved, the agent answers a different question in silence")
+        assert "High Value" in text, (
+            f"ontology_only={ontology_only}: the segment names must reach the instructions "
+            f"from config - hard-coding or dropping them brings the guessing back")
+
+    src = (SRC / "deploy_data_agent.py").read_text(encoding="utf-8")
+    assert 'cfg.get("segments"' in src or 'cfg["segments"]' in src, (
+        "the segment list must be read from config.yaml at deploy time; a copy in the "
+        "instructions would keep naming segments the generator no longer writes")
+
+
+def test_the_agent_is_told_every_interaction_value_the_generator_writes():
+    """The agent invents an enum value when the QUESTION contains one.
+
+    3 Aug 2026, live run: "quels comptes B2B concentrent le plus d'interactions support
+    negatives" produced valid GQL filtering `interaction_type = "support"`. The generator
+    writes call, email, chat, ticket, meeting - there is no "support". Zero rows, and the
+    agent reported "aucune interaction de ce type", which reads like a finding.
+
+    Same failure as at_risk, different column: the model borrows a word from the question
+    and treats it as data. The cure is not phrasing, it is stating the domain - so this
+    test reads the values back out of generate_data.py and fails when the two drift.
+
+    Both branches, because instruction text is tenant state and a rule at one call site
+    only flips the live agent on alternating deploys.
+    """
+    gen = (SRC / "generate_data.py").read_text(encoding="utf-8")
+    types = re.search(r'types = \[([^\]]+)\]', gen)
+    assert types, "generate_data.py no longer declares the interaction types as a literal"
+    values = re.findall(r'"([a-z_]+)"', types.group(1))
+    assert len(values) >= 3, f"only parsed {values} - the regex is no longer reading the list"
+
+    agent = _agent_module()
+    for ontology_only in (True, False):
+        text = agent.ai_instructions(ontology_only, "Black Friday Blast", 317, "High Value")
+        for value in values:
+            assert value in text, (
+                f"ontology_only={ontology_only}: interaction_type '{value}' is written by the "
+                f"generator but never named to the agent - it will keep guessing one")
+        assert "support" in text.lower(), (
+            f"ontology_only={ontology_only}: 'support' is the word the agent actually invented; "
+            f"listing the real values without denying that one leaves the trap open")
+        for value in ("negative", "neutral", "positive"):
+            assert value in text, (
+                f"ontology_only={ontology_only}: sentiment '{value}' must be stated - it is the "
+                f"other column every churn question filters on")
+
+
 # ── The graph must be VISIBLE in the portal ──────────────────────────────────
 # Asked for on 3 Aug 2026: "il faut plus d'elements sur l'ontologie car le semantic
 # model tout le monde connait". Before this, the portal declared one source (the
@@ -1618,6 +1697,17 @@ _PROBED_ONTOLOGY_QUESTIONS = [
     "Quelles categories de produits les clients du segment High Value achetent-ils",
     "Quels comptes B2B concentrent le plus d interactions support negatives",
     "Quels clients a risque appartiennent au meme compte B2B",
+    # Probed 2026-08-03 for the follow-up wave, 8/8 reached GQL
+    # (files/probe_followups.json). The eighth, "Quelles campagnes ont genere des
+    # commandes chez les clients a risque", routed correctly but returned an empty
+    # result set - correct routing is not a usable answer, so it is not listed here.
+    "Quels comptes B2B regroupent le plus de clients a risque",
+    "Quelles campagnes ont touche les clients du segment High Value",
+    "Quels segments les clients a risque partagent-ils",
+    "Quels produits les clients a risque avaient-ils commandes",
+    "Quels objets d email la campagne Cyber Monday a-t-elle utilises",
+    "Quelles campagnes ont ete envoyees aux clients du segment High Value",
+    "Quels clients ont commande des produits de la categorie Electronics",
 ]
 
 
@@ -1702,3 +1792,125 @@ def test_the_suggestion_button_sends_the_question_not_its_pill():
     assert "data-q=" in html, "the suggestion button must carry its question in data-q"
     assert "getAttribute('data-q')" in html, (
         "useSug must read data-q; textContent now includes the source pill")
+
+
+# ── Follow-up suggestions ────────────────────────────────────
+# Same discipline as the opening suggestions: a follow-up announces an engine, so the
+# announcement has to be evidence-based, and it has to survive to the screen.
+
+def _portal_followup_tables() -> dict:
+    """{_FOLLOWUP_TEMPLATES, _UNIVERSAL_FOLLOWUPS} read statically from main.py."""
+    tree = ast.parse((PORTAL / "backend" / "main.py").read_text(encoding="utf-8"))
+    consts = _module_constants(tree)
+    out: dict = {}
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name) and target.id in (
+                    "_FOLLOWUP_TEMPLATES", "_UNIVERSAL_FOLLOWUPS"):
+                out[target.id] = _lit_or_dynamic(node.value, consts)
+    return out
+
+
+def _all_followup_branches():
+    """(label, [follow-ups]) for every keyword branch and every universal fallback."""
+    tables = _portal_followup_tables()
+    for persona, branches in (tables.get("_FOLLOWUP_TEMPLATES") or {}).items():
+        for pattern, items in (branches or {}).items():
+            yield f"{persona}/{pattern}", items
+    for persona, items in (tables.get("_UNIVERSAL_FOLLOWUPS") or {}).items():
+        yield f"{persona}/universal", items
+
+
+def test_the_followup_tables_are_actually_readable():
+    """Guard the guards: a parse that silently degrades makes every test below vacuous.
+
+    The `src` symbols are ast.Name and the lists hold f-strings, so a parser that does
+    not resolve constants or does not descend into lists returns "<dynamic>" for
+    everything and the follow-up assertions pass on an empty set.
+    """
+    branches = list(_all_followup_branches())
+    assert len(branches) >= 8, f"only {len(branches)} follow-up branches parsed - parse degraded"
+    degraded = [label for label, b in branches if not isinstance(b, list)]
+    assert not degraded, (
+        f"these branches parsed as {'<dynamic>'!r} instead of a list: {degraded}. Every "
+        f"assertion below iterates them, so they would be checked character by character "
+        f"and quietly prove nothing.")
+    items = [c for _, b in branches for c in b]
+    assert len(items) >= 30, f"only {len(items)} follow-ups parsed - parse degraded"
+    assert any(isinstance(c, dict) and c.get("src") == "ontology" for c in items), (
+        "no follow-up resolved to src='ontology' - the constants were not resolved")
+
+
+def test_a_followup_declares_a_source_the_portal_can_render():
+    """A follow-up with no pill breaks the colour code exactly when it has been learnt.
+
+    The audience reads the purple badge on the answer, then three unlabelled buttons:
+    the demo stops saying which engine is about to work, which is the whole point.
+    """
+    for label, items in _all_followup_branches():
+        assert isinstance(items, list) and items, f"{label}: no follow-ups"
+        for c in items:
+            assert isinstance(c, dict), (
+                f"{label}: follow-up must be {{q, src}}, got {type(c).__name__} - a bare "
+                f"string serialises fine and renders with no pill")
+            assert c.get("src") in ("ontology", "model"), (
+                f"{label}: src={c.get('src')!r}; the frontend only renders 'ontology' "
+                f"and 'model', anything else silently loses its pill")
+            assert c.get("q"), f"{label}: follow-up has no question text"
+
+
+def test_a_followup_announced_as_graph_was_actually_probed_as_graph():
+    """Announcing the graph for a question that routes to DAX contradicts itself on stage."""
+    for label, items in _all_followup_branches():
+        for c in items:
+            if not (isinstance(c, dict) and c.get("src") == "ontology"):
+                continue
+            text = _suggestion_text(c)
+            if text == "<dynamic>":
+                continue
+            assert any(p in text for p in _PROBED_ONTOLOGY_QUESTIONS), (
+                f"{label}: '{text}' is announced as a graph question but is not one of "
+                f"the phrasings probed live - probe it first, or label it 'model'")
+
+
+def test_every_followup_branch_can_offer_both_engines():
+    """Three follow-ups from one thematic branch otherwise share one source.
+
+    _blend_sources can only show both engines if the branch it draws from holds both.
+    A branch that is graph-only turns the dual-source agent into a graph demo; a branch
+    that is model-only is how a graph answer dead-ends and the ontology disappears.
+    """
+    for label, items in _all_followup_branches():
+        srcs = {c.get("src") for c in items if isinstance(c, dict)}
+        assert "ontology" in srcs and "model" in srcs, (
+            f"{label}: offers only {sorted(srcs)} - the trio cannot show both engines")
+
+
+def test_the_relational_vocabulary_leads_into_the_graph():
+    """The words that describe relationships must have a branch, or the graph is unreachable.
+
+    A question about B2B accounts, segments or products is a graph question; if no branch
+    matches it, the answer falls back to the universal list and the conversation walks
+    away from the ontology at the exact moment it was inside it.
+    """
+    templates = _portal_followup_tables().get("_FOLLOWUP_TEMPLATES") or {}
+    assert templates, "the follow-up templates did not parse"
+    for persona, branches in templates.items():
+        joined = " ".join(branches or {})
+        assert any(w in joined for w in ("compte", "b2b", "segment", "produit", "categorie",
+                                         "objet", "asset")), (
+            f"persona '{persona}' has no relational branch: a graph answer there falls "
+            f"straight through to the generic fallback")
+
+
+def test_followups_and_suggestions_share_one_renderer():
+    """Two renderers is how the pill got added to one wave of buttons and not the other."""
+    html = (PORTAL / "static" / "index.html").read_text(encoding="utf-8")
+    assert "function sugBtnHtml(" in html, (
+        "the shared suggestion/follow-up renderer disappeared")
+    assert html.count("sugBtnHtml(key,s)") >= 2, (
+        "both the opening suggestions and the follow-ups must go through sugBtnHtml")
+    assert "d.followUps.map(function(s){return sugBtnHtml(key,s);})" in html, (
+        "the follow-ups render through their own path again - they will lose the pill")

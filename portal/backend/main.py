@@ -387,11 +387,22 @@ class ToolTrace(BaseModel):
     output: str = ""
 
 
+class FollowUp(BaseModel):
+    """A follow-up carries its expected engine, exactly like an opening suggestion.
+
+    Typed rather than a bare string so the pill cannot be dropped by accident: a plain
+    list[str] would serialise fine and render pill-less, which is the defect this shape
+    exists to prevent.
+    """
+    q: str
+    src: str = ""
+
+
 class ChatResponse(BaseModel):
     answer: str
     steps: list[str] = []
     queryTrace: list[ToolTrace] = []
-    followUps: list[str] = []
+    followUps: list[FollowUp] = []
     source: str = ""            # "ontology" | "semantic_model" | "" when nothing ran
     sourceName: str = ""        # ONT_Customer360 / SM_Marketing_Analytics
     queryLanguage: str = ""     # "GQL" | "DAX"
@@ -432,123 +443,239 @@ async def list_agents():
 # ── Follow-up suggestions ────────────────────────────────────
 # Keyword -> follow-ups, so the conversation keeps walking the demo arc
 # detecter -> diagnostiquer -> quantifier -> agir instead of dead-ending.
+#
+# Follow-ups carry {"q", "src"} exactly like the opening suggestions, for two reasons.
+# First, a follow-up with no pill breaks the colour code the room has just learnt: the
+# audience sees a purple badge on the answer, then three unlabelled buttons, and the
+# demo silently stops explaining which engine is about to work. Second, the relational
+# branches below (compte / segment / produit / objet) are what stops a graph answer
+# dead-ending on the generic fallback - the graph must lead somewhere, into the graph.
+#
+# Every ONT follow-up here was observed reaching GQL live (files/probe_followups.json),
+# same rule as the opening suggestions: never label from appearance.
 _FOLLOWUP_TEMPLATES = {
     "direction": {
         r"risque|churn|attrition|partir": [
-            "Combien de valeur vie client est exposee a ce risque ?",
-            "Quelle etape du cycle de vie concentre le risque ?",
-            "Quelle campagne est a l'origine de ce risque ?",
+            {"q": "Combien de valeur vie client est exposee a ce risque ?", "src": SEM},
+            {"q": "Quelle etape du cycle de vie concentre le risque ?", "src": SEM},
+            {"q": "Quelle campagne est a l'origine de ce risque ?", "src": SEM},
+            {"q": "Quels comptes B2B regroupent le plus de clients a risque ?", "src": ONT},
+            {"q": "Quels segments les clients a risque partagent-ils ?", "src": ONT},
+        ],
+        r"compte|b2b|filiale|groupe|entreprise": [
+            {"q": "Quels comptes B2B regroupent le plus de clients a risque ?", "src": ONT},
+            {"q": "Quels comptes B2B concentrent le plus d interactions support negatives ?",
+             "src": ONT},
+            {"q": "Combien de valeur vie client est exposee a ce risque ?", "src": SEM},
+        ],
+        r"segment|cible|audience": [
+            {"q": "Quelles campagnes ont touche les clients du segment High Value ?", "src": ONT},
+            {"q": "Quelles categories de produits les clients du segment High Value "
+                  "achetent-ils ?", "src": ONT},
+            {"q": "Quelle etape du cycle de vie concentre le risque ?", "src": SEM},
         ],
         r"chiffre|revenu|\bca\b|vente": [
-            "Quelle part du chiffre d'affaires est attribuee aux campagnes ?",
-            "Quel est le panier moyen ?",
+            {"q": "Quelle part du chiffre d'affaires est attribuee aux campagnes ?", "src": SEM},
+            {"q": "Quel est le panier moyen ?", "src": SEM},
+            {"q": "Quelles categories de produits les clients du segment High Value "
+                  "achetent-ils ?", "src": ONT},
         ],
         r"nps|satisfaction|promoteur|detracteur": [
-            "Les detracteurs sont-ils plus a risque d'attrition ?",
-            "Combien d'interactions support negatives non resolues ?",
+            {"q": "Les detracteurs sont-ils plus a risque d'attrition ?", "src": SEM},
+            {"q": "Combien d'interactions support negatives non resolues ?", "src": SEM},
+            {"q": "Quels comptes B2B concentrent le plus d interactions support negatives ?",
+             "src": ONT},
         ],
     },
     "retention": {
         r"risque|cohorte|score|attrition": [
-            "Quels clients dois-je rappeler en priorite ?",
-            "Quelle part de cette cohorte a recu la campagne coupable ?",
-            "Combien de chiffre d'affaires historique est expose ?",
+            {"q": "Quels clients dois-je rappeler en priorite ?", "src": SEM},
+            {"q": "Quelle part de cette cohorte a recu la campagne coupable ?", "src": SEM},
+            {"q": "Combien de chiffre d'affaires historique est expose ?", "src": SEM},
+            {"q": "Quels clients a risque appartiennent au meme compte B2B ?", "src": ONT},
+            {"q": "Quels produits les clients a risque avaient-ils commandes ?", "src": ONT},
+        ],
+        r"compte|b2b|filiale|groupe|entreprise": [
+            {"q": "Quels clients a risque appartiennent au meme compte B2B ?", "src": ONT},
+            {"q": "Quels comptes B2B concentrent le plus d interactions support negatives ?",
+             "src": ONT},
+            {"q": "Combien de chiffre d'affaires historique est expose ?", "src": SEM},
+        ],
+        r"segment|audience|cible": [
+            {"q": "Quels segments les clients a risque partagent-ils ?", "src": ONT},
+            {"q": "Quelles campagnes ont ete envoyees aux clients du segment High Value ?",
+             "src": ONT},
+            {"q": "Quelle part de cette cohorte a recu la campagne coupable ?", "src": SEM},
         ],
         r"recence|inactif|derniere commande|dormant": [
-            "Depuis combien de temps ces clients n'ont-ils pas commande ?",
-            "Combien de clients sont deja consideres comme perdus ?",
+            {"q": "Depuis combien de temps ces clients n'ont-ils pas commande ?", "src": SEM},
+            {"q": "Combien de clients sont deja consideres comme perdus ?", "src": SEM},
+            {"q": "Quels produits les clients a risque avaient-ils commandes ?", "src": ONT},
         ],
         r"desabonn|unsub|opt.?out|consentement": [
-            "Combien de clients desabonnes sont encore des acheteurs ?",
-            "Quelle campagne a declenche ces desabonnements ?",
+            {"q": "Combien de clients desabonnes sont encore des acheteurs ?", "src": SEM},
+            {"q": "Quelle campagne a declenche ces desabonnements ?", "src": SEM},
+            {"q": "Quelles campagnes ont ete envoyees aux clients du segment High Value ?",
+             "src": ONT},
         ],
         r"support|interaction|reclamation|negatif": [
-            "Combien d'interactions negatives restent non resolues ?",
-            "Ces clients ont-ils un score d'attrition plus eleve ?",
+            {"q": "Combien d'interactions negatives restent non resolues ?", "src": SEM},
+            {"q": "Ces clients ont-ils un score d'attrition plus eleve ?", "src": SEM},
+            {"q": "Quels comptes B2B concentrent le plus d interactions support negatives ?",
+             "src": ONT},
         ],
     },
     "marketing": {
         r"pression|envoi|email|sollicit|fatigue": [
-            "Quelle campagne envoie le plus d'emails par client ?",
-            "Quel segment a subi cette sur-sollicitation ?",
-            "Combien de desabonnements cette campagne a-t-elle generes ?",
+            {"q": "Quelle campagne envoie le plus d'emails par client ?", "src": SEM},
+            {"q": "Quel segment a subi cette sur-sollicitation ?", "src": SEM},
+            {"q": "Combien de desabonnements cette campagne a-t-elle generes ?", "src": SEM},
+            {"q": "Quelles campagnes ont ete envoyees aux clients du segment High Value ?",
+             "src": ONT},
         ],
         r"ouverture|clic|engagement|taux": [
-            "Comment le taux d'ouverture se compare-t-il entre campagnes ?",
-            "Quel est le taux de desabonnement par campagne ?",
+            {"q": "Comment le taux d'ouverture se compare-t-il entre campagnes ?", "src": SEM},
+            {"q": "Quel est le taux de desabonnement par campagne ?", "src": SEM},
+            {"q": "Quels objets d email la campagne Cyber Monday a-t-elle utilises ?",
+             "src": ONT},
+        ],
+        r"objet|asset|creation|variante|accroche": [
+            {"q": "Quels objets d email la campagne Cyber Monday a-t-elle utilises ?",
+             "src": ONT},
+            {"q": "Quels produits ont ete achetes par les clients touches par "
+                  f"{CULPRIT} ?", "src": ONT},
+            {"q": "Comment le taux d'ouverture se compare-t-il entre campagnes ?", "src": SEM},
         ],
         r"campagne|budget|objectif|roi": [
-            "Quel est le ROI de chaque campagne ?",
-            "Quel budget a ete investi par objectif ?",
+            {"q": "Quel est le ROI de chaque campagne ?", "src": SEM},
+            {"q": "Quel budget a ete investi par objectif ?", "src": SEM},
+            {"q": "Quels objets d email la campagne Cyber Monday a-t-elle utilises ?",
+             "src": ONT},
+            {"q": "Quels produits ont ete achetes par les clients touches par "
+                  f"{CULPRIT} ?", "src": ONT},
         ],
         r"segment|cible|audience": [
-            "Quel segment a le plus souffert ?",
-            "Combien de clients de ce segment sont maintenant a risque ?",
+            {"q": "Quel segment a le plus souffert ?", "src": SEM},
+            {"q": "Combien de clients de ce segment sont maintenant a risque ?", "src": SEM},
+            {"q": "Quelles campagnes ont touche les clients du segment High Value ?", "src": ONT},
+            {"q": "Quelles categories de produits les clients du segment High Value "
+                  "achetent-ils ?", "src": ONT},
         ],
     },
     "commerce": {
         r"chiffre|revenu|\bca\b|panier": [
-            "Quel est le panier moyen par canal de vente ?",
-            "Quelle categorie de produit contribue le plus ?",
+            {"q": "Quel est le panier moyen par canal de vente ?", "src": SEM},
+            {"q": "Quelle categorie de produit contribue le plus ?", "src": SEM},
+            {"q": "Quelles categories de produits les clients du segment High Value "
+                  "achetent-ils ?", "src": ONT},
+        ],
+        r"produit|categorie|reference|article": [
+            {"q": "Quels clients ont commande des produits de la categorie Electronics ?",
+             "src": ONT},
+            {"q": "Quelles categories de produits les clients du segment High Value "
+                  "achetent-ils ?", "src": ONT},
+            {"q": "Quelle categorie de produit contribue le plus ?", "src": SEM},
         ],
         r"attribution|campagne|roi": [
-            "Quel est le ROI des campagnes ?",
-            "Quelle part des commandes est attribuee a une campagne ?",
+            {"q": "Quel est le ROI des campagnes ?", "src": SEM},
+            {"q": "Quelle part des commandes est attribuee a une campagne ?", "src": SEM},
+            {"q": "Quels produits ont ete achetes par les clients touches par "
+                  f"{CULPRIT} ?", "src": ONT},
         ],
         r"retour|remboursement|motif": [
-            "Quels sont les principaux motifs de retour ?",
-            "Le taux de retour varie-t-il par categorie ?",
+            {"q": "Quels sont les principaux motifs de retour ?", "src": SEM},
+            {"q": "Le taux de retour varie-t-il par categorie ?", "src": SEM},
+            {"q": "Quels clients ont commande des produits de la categorie Electronics ?",
+             "src": ONT},
         ],
         r"commande|frequence|volume": [
-            "Comment le volume de commandes se repartit-il par canal ?",
-            "Les clients a risque ont-ils arrete de commander ?",
+            {"q": "Comment le volume de commandes se repartit-il par canal ?", "src": SEM},
+            {"q": "Les clients a risque ont-ils arrete de commander ?", "src": SEM},
+            {"q": "Quels produits les clients a risque avaient-ils commandes ?", "src": ONT},
         ],
     },
 }
 
 _UNIVERSAL_FOLLOWUPS = {
     "direction": [
-        "Donne-moi une vue d'ensemble de la relation client",
-        "Quels indicateurs dois-je surveiller en priorite ?",
-        "Ou faut-il concentrer les efforts ?",
+        {"q": "Donne-moi une vue d'ensemble de la relation client", "src": SEM},
+        {"q": "Quels indicateurs dois-je surveiller en priorite ?", "src": SEM},
+        {"q": "Quels comptes B2B regroupent le plus de clients a risque ?", "src": ONT},
+        {"q": "Quels segments les clients a risque partagent-ils ?", "src": ONT},
     ],
     "retention": [
-        "Combien de clients sont a risque et pour quelle valeur ?",
-        "Quels clients dois-je rappeler en priorite ?",
-        "Quelle est la cause racine de ce risque ?",
+        {"q": "Combien de clients sont a risque et pour quelle valeur ?", "src": SEM},
+        {"q": "Quelle est la cause racine de ce risque ?", "src": SEM},
+        {"q": "Quels clients a risque appartiennent au meme compte B2B ?", "src": ONT},
+        {"q": "Quels produits les clients a risque avaient-ils commandes ?", "src": ONT},
     ],
     "marketing": [
-        "Quelle campagne envoie le plus d'emails par client ?",
-        "Quel est le taux de desabonnement par campagne ?",
-        "Quel segment concentre le plus d'envois et quel est son score de churn ?",
+        {"q": "Quelle campagne envoie le plus d'emails par client ?", "src": SEM},
+        {"q": "Quel est le taux de desabonnement par campagne ?", "src": SEM},
+        {"q": "Quelles campagnes ont ete envoyees aux clients du segment High Value ?",
+         "src": ONT},
+        {"q": "Quels objets d email la campagne Cyber Monday a-t-elle utilises ?", "src": ONT},
     ],
     "commerce": [
-        "Quelle categorie genere le plus de chiffre d'affaires ?",
-        "Quel est le ROI des campagnes ?",
-        "Quel est le panier moyen par canal ?",
+        {"q": "Quelle categorie genere le plus de chiffre d'affaires ?", "src": SEM},
+        {"q": "Quel est le ROI des campagnes ?", "src": SEM},
+        {"q": "Quels clients ont commande des produits de la categorie Electronics ?",
+         "src": ONT},
+        {"q": "Quelles categories de produits les clients du segment High Value achetent-ils ?",
+         "src": ONT},
     ],
 }
 
 
-def _generate_followups(agent_key: str, question: str, answer: str) -> list[str]:
-    """Three contextual follow-ups derived from the question + the agent's answer."""
+def _blend_sources(pool: list[dict], first: str, k: int = 3) -> list[dict]:
+    """Keep both engines visible in the trio, `first` leading.
+
+    A dual-source agent that answers three graph questions in a row demonstrates a graph
+    database, not a dual-source agent. Taking the top 3 by relevance does exactly that,
+    because the matching branch is thematic and its follow-ups tend to share a source.
+    So seed the trio with one of each, in relevance order within each source, then fill.
+    """
+    second = SEM if first == ONT else ONT
+    head = [c for c in pool if c.get("src") == first]
+    tail = [c for c in pool if c.get("src") == second]
+    out: list[dict] = []
+    if head:
+        out.append(head.pop(0))
+    if tail:
+        out.append(tail.pop(0))
+    rest = head + tail
+    while len(out) < k and rest:
+        out.append(rest.pop(0))
+    return out[:k]
+
+
+def _generate_followups(agent_key: str, question: str, answer: str,
+                        source: str = "") -> list[dict]:
+    """Three contextual follow-ups, each declaring the engine it is expected to use.
+
+    `source` is the engine that just answered. The trio leads with the OTHER one: the
+    story worth telling on stage is "the graph found who, the model says how much", and
+    a follow-up that switches engine makes that switch visible. Both are present either
+    way - `_blend_sources` guarantees it whenever the pool holds both.
+    """
     combined = (question + " " + answer).lower()
     q_lower = question.lower()
     seen: set[str] = set()
-    unique: list[str] = []
+    pool: list[dict] = []
 
     def _push(items):
         for c in items:
-            if c not in seen and c.lower() != q_lower:
-                seen.add(c)
-                unique.append(c)
+            text = c.get("q", "")
+            if text and text not in seen and text.lower() != q_lower:
+                seen.add(text)
+                pool.append(c)
 
     for pattern, suggestions in _FOLLOWUP_TEMPLATES.get(agent_key, {}).items():
         if re.search(pattern, combined):
             _push(suggestions)
-    if len(unique) < 3:
+    if len(pool) < 3:
         _push(_UNIVERSAL_FOLLOWUPS.get(agent_key, []))
-    return unique[:3]
+    return _blend_sources(pool, SEM if source == "ontology" else ONT)
 
 
 # ── Data Agent chat (OpenAI Assistants API) ──────────────────
@@ -686,7 +813,8 @@ async def agent_chat(agent_key: str, req: ChatRequest):
         log.warning(f"[{agent_key}] DONE len={len(answer)} status={run_status} steps={steps}")
         src = trace_source.describe([t.model_dump() for t in query_trace])
         return ChatResponse(answer=answer, steps=steps, queryTrace=query_trace,
-                            followUps=_generate_followups(agent_key, req.message, answer),
+                            followUps=_generate_followups(agent_key, req.message, answer,
+                                                          src.get("source", "")),
                             **src)
 
 
