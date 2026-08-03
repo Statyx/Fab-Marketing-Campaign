@@ -15,6 +15,7 @@ import json
 import os
 import pathlib
 import re
+import subprocess
 import sys
 
 import pandas as pd
@@ -50,13 +51,29 @@ def test_config_has_required_keys(cfg):
         assert key in cfg, f"config missing '{key}'"
 
 
-def test_workspace_name_is_pinned(cfg):
-    """The repo is public: the workspace name must stay neutral.
+def test_the_published_workspace_name_is_pinned_neutral():
+    """The repo is public: the workspace name it ships must stay neutral.
 
     It used to carry the owner's initials as a prefix, which published who ran the demo.
-    Pinning it here is what stops that coming back through config.example.yaml.
+    The pin belongs on config.example.yaml because that is the file that is *published*.
+    It was originally placed on config.yaml, which is gitignored and therefore cannot leak
+    anything -- so the pin constrained the operator's own live workspace instead of the
+    repo, and failed on a machine whose workspace is legitimately named something else.
     """
-    assert cfg["workspace_name"] == "Customer 360 Marketing"
+    example = yaml.safe_load((SRC / "config.example.yaml").read_text(encoding="utf-8"))
+    assert example["workspace_name"] == "Customer 360 Marketing"
+
+
+def test_the_private_config_can_never_be_published():
+    """What makes the pin above sufficient: the real config never ships.
+
+    The neutral-name pin only protects the repo as long as config.yaml stays ignored.
+    If someone un-ignores it, the operator's workspace name becomes publishable and the
+    scope of the pin has to be reconsidered -- so fail here rather than leak there.
+    """
+    out = subprocess.run(["git", "check-ignore", "src/config.yaml"],
+                         cwd=ROOT, capture_output=True, text=True)
+    assert out.returncode == 0, "src/config.yaml is no longer gitignored: it would be published"
 
 
 def test_churn_weights_sum_to_one(cfg):

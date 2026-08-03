@@ -201,6 +201,18 @@ first version of those tests wrapped the URL across two source lines; the guard 
 bare GUID with no URL around it and failed on the test file itself. Keep any literal a
 line-based rule must match on **one physical line**.
 
+**A guard must constrain the surface it protects — pin the file that ships.** The neutral
+workspace name was pinned by asserting on `src/config.yaml`, which is **gitignored** and
+therefore cannot leak anything. It could not protect the repo, and it did constrain the
+operator's own Fabric workspace: the gate went red on a machine whose live workspace is
+legitimately named something else, and the only ways out were renaming a customer-facing
+workspace two days before a demo or deleting the check. The pin belongs on
+`src/config.example.yaml` (`test_the_published_workspace_name_is_pinned_neutral`), and what
+makes that sufficient — the private file never shipping — is itself asserted by
+`test_the_private_config_can_never_be_published`, which runs `git check-ignore`. Before
+writing an assertion about publication, ask **whether the file it reads is published**;
+if it is not, the assertion is aimed at the operator, not at the repo.
+
 ## CI runs on Linux; this repo was written on Windows
 Every `src/*.py` carried `import os, sys, winreg` at module scope for the PATH workaround.
 `winreg` is Windows-only, and the test suite imports those modules directly — so on
