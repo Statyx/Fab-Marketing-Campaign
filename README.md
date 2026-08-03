@@ -5,10 +5,10 @@
 
 ![Fabric](https://img.shields.io/badge/Microsoft_Fabric-Lakehouse_+_Direct_Lake-purple?style=for-the-badge&logo=microsoft)
 ![Deploy](https://img.shields.io/badge/deploy-idempotent_(state.json)-blue?style=for-the-badge)
-![Tests](https://img.shields.io/badge/tests-54_passing-brightgreen?style=for-the-badge)
+![Tests](https://img.shields.io/badge/tests-164_passing-brightgreen?style=for-the-badge)
+[![CI](https://github.com/Statyx/Fab-Marketing-Campaign/actions/workflows/no-client-leak.yml/badge.svg)](https://github.com/Statyx/Fab-Marketing-Campaign/actions/workflows/no-client-leak.yml)
 
-
-
+**Workspace**: `Customer 360 Marketing` (set in `src/config.yaml`)
 
 ---
 
@@ -30,12 +30,11 @@ dataset (buyers only, `seed=42`):
 | Mean score: lapsed > 180 d vs recent buyers | flat | **59.1 vs 19.9** |
 | Mean score: unsubscribed vs subscribed | flat | **52.0 vs 28.6** |
 | Aggregates vs real orders | all zeros | computed, reconciled |
-| Enforced by tests | ✗ | ✅ 54 tests |
+| Enforced by tests | ✗ | ✅ 164 tests |
 
 The generator simulates behaviour first — sends, opens, clicks, unsubscribes, orders, support
 tickets — and only then derives churn, CLV and lifecycle from it. The test suite fails the build if
 that stops being true.
-
 
 <img width="2548" height="1266" alt="image" src="https://github.com/user-attachments/assets/62775a56-8db1-4e8c-83f1-f4fc42f137d4" />
 <img width="2548" height="1266" alt="image" src="https://github.com/user-attachments/assets/8d0033cb-399a-4606-8992-63dcb1e8e338" />
@@ -154,6 +153,8 @@ Storyline check
 ## Project layout
 
 ```
+.github/workflows/         — CI: client-leak guard + pytest (runs on every branch and PR)
+.github/scripts/           — check_client_leak.py (run it locally before pushing)
 src/config.yaml               — workspace, storyline, churn weights, volumes (single source of truth)
 src/generate_data.py          — behaviour simulation + derived churn
 src/helpers.py                — Fabric API auth, async polling, config/state
@@ -168,11 +169,70 @@ src/deploy_data_agent.py      — dual-source agent (ontology GQL + semantic mod
 src/state.json                — deployment IDs (idempotent, gitignored)
 portal/                       — FastAPI portal: 4 personas, embedded report pages + Data Agent chat
 tests/test_smoke.py           — offline gate: data signal, report ↔ model, portal ↔ report, layout, guards
+tests/test_leak_guard.py      — gates the leak guard itself: a detection AND a silence test per rule
 tests/test_taskflow.py        — task flow gate (schema, DAG, config sync, dual-source)
 taskflow/                     — workspace task flow + import instructions
 theme/                        — accessible Fluent-2 Power BI theme (WCAG / colour-blind checked)
 docs/ARCHITECTURE.md          — full design
 ```
+
+---
+
+## Public-repo hygiene
+
+This repo is public and the demo data is synthetic. Nothing tracked here may name a real
+customer, a real workspace owner, or a real Fabric item.
+
+```powershell
+python .github\scripts\check_client_leak.py     # exit 0 = clean
+```
+
+The same script runs in CI on every branch and every PR, and `tests/test_leak_guard.py`
+gates the guard itself — every rule has a detection test **and** a silence test.
+
+**It names nobody.** Two sister repos guard against customer names by listing those names
+in the guard: one in a Python deny-list, one in a shell pattern with a letter parenthesised
+so that it fools a full-text search and no human reader. A public file that enumerates a
+client portfolio is a worse disclosure than the isolated mention it was written to catch.
+So every rule here matches a **shape**:
+
+| Rule | Shape |
+|---|---|
+| GUID | anything that is not one of two known placeholder forms |
+| Fabric SQL endpoint | a `[a-z0-9]{20,}` opaque token in front of the service domain |
+| Personal path | `C:\Users\…`, `/home/…`, `/Users/…` — placeholders exempt |
+| Personal workspace prefix | 2–3 initials + ` - ` + Titlecase, **anchored at the start of a name** |
+| Renamed repository | `…-Live-Event` with any prefix other than `Fab-` |
+
+The GUID rule is an allow-list on purpose. The sister rule only looks at GUIDs preceded by
+an identity label (`tenant_id`, `client_id`), which would have missed the real report id
+this repo carried in a prose sentence for 27 commits — and an allow-list never has to
+write the real identifier down in order to catch it.
+
+An allow-list has a cost the deny-list does not: it also flags identifiers that are public
+by construction. `github.com/user-attachments/assets/<id>` is one — it addresses an image
+GitHub already serves from this public README, and reveals nothing about the tenant. That
+exemption is not cosmetic: before it existed the rule fired on the screenshots below the
+title, and acting on the finding deleted three of them. The guard degraded the repository it
+protects. It is scoped to the URL span, not to the line, so a real id cannot ride along next
+to an image tag — `test_the_attachment_exemption_covers_the_url_and_nothing_else` pins that.
+
+The workspace-prefix rule is the delicate one: initials followed by a dash and a name is
+also the shape of a subtraction chain. Anchoring it at the start of a name and capping the
+initials at three letters is what keeps `Revenue - COGS - Operating Expenses` and
+`FAB_W = SLIDE_W - FAB_L - GAP - M` silent. Both are pinned as tests.
+
+An optional name-based rule reads `CLIENT_DENYLIST` (one entry per line), wired to a GitHub
+Actions secret in CI or to a gitignored `.clientdeny` locally. **Absent ⇒ the rule is
+skipped with a warning, never a failure.**
+
+`src/config.yaml`, `src/state.json` and `data/raw/` are gitignored because they hold real
+identifiers or a regenerable dataset; CI fails if any of them ever becomes tracked. The
+test suite is offline by construction — CI materialises `config.yaml` / `state.json` from
+the committed `*.example` files, regenerates the dataset from its seed, and needs no
+secret, no Azure credential and no capacity. **All 164 tests run; a skip fails the job**,
+because a skipped test is a test that did not run, and the dataset tests are the ones
+guarding behaviour-before-labels.
 
 ---
 
@@ -242,12 +302,12 @@ replay the item assignments (the file cannot carry them). Full steps and the ite
 ## Status
 
 Everything below was deployed **and read back from the tenant** on workspace
-`CDR - Marketing Campaign`. Nothing here is claimed from a script's exit code alone.
+`Customer 360 Marketing`. Nothing here is claimed from a script's exit code alone.
 
 | Layer | Code | Deployed |
 |---|---|---|
 | Config-driven generator with real churn | ✅ | n/a |
-| Test gate (104 tests, fully offline) | ✅ | n/a |
+| Test gate (164 tests, fully offline) | ✅ | n/a |
 | Workspace + Lakehouse (15 CSV + 420 text files) | ✅ | ✅ `LH_Customer360` |
 | Delta tables + curated churn views (Spark notebook) | ✅ | ✅ `NB_Setup_Customer360` |
 | Semantic model (Direct Lake, 12 tables / 50 measures) | ✅ | ✅ `SM_Marketing_Analytics` |
@@ -320,5 +380,5 @@ The storyline is visible in the deployed data without being told: `Black Friday 
 | `v_churn_cohort` | the actionable at-risk customers with their drivers |
 | `v_campaign_pressure` | sends per customer per campaign — exposes the over-mailing |
 
-Built on the same idempotent pattern as the sister demos (`Publicis-Live-Event`,
-`Network_Operations`): config-driven, `state.json`, resumable `deploy_all.py`, mandatory test gate.
+Built on the same idempotent pattern as the sister demos (`Fab-Live-Event`,
+`Fab-Network-Operations`): config-driven, `state.json`, resumable `deploy_all.py`, mandatory test gate.

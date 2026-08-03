@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Shared helpers for Network Operations deployment scripts.
+Shared helpers for Fab-Marketing-Campaign deployment scripts.
 Authentication, async polling, config/state, Fabric items, Kusto (Eventhouse).
-Reused from the proven Financial_Platform pattern.
+Reused from the proven sister-project pattern.
 """
 
 import base64

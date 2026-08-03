@@ -1,4 +1,4 @@
-# CDR - Marketing Campaign — Configuration
+# Customer 360 Marketing — Configuration (EXAMPLE)
 # Fab-Marketing-Campaign: Customer 360 (CRM + Marketing + Commerce) on Microsoft Fabric,
 # built around a CHURN storyline that is derived from behaviour, not invented.
 # Everything the generator and the deploy scripts need lives here — no hard-coded values in code.
@@ -11,7 +11,7 @@
 #   tenant_id       -> az account show --query tenantId -o tsv
 #   az_subscription -> az account show --query name -o tsv
 
-workspace_name: "CDR - Marketing Campaign"
+workspace_name: "Customer 360 Marketing"
 capacity_id: "00000000-0000-0000-0000-000000000000"    # <your Fabric capacity id>
 fabric_api_base: "https://api.fabric.microsoft.com/v1"
 tenant_id: "00000000-0000-0000-0000-000000000000"      # <your Entra tenant id>

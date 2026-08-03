@@ -51,8 +51,9 @@ report → data agent.
 One command: `python deploy_all.py` (idempotent, tenant-guarded).
 
 ## Inherited lessons — do not relearn these
-- **One Fabric item has ONE owning generator.** Two sessions published to report
-  `ace677a4-02a7-4cbf-bc16-8b695fea3c7d` and silently overwrote each other for a day. The fix that
+- **One Fabric item has ONE owning generator.** Two sessions published to the same report
+  id (`<REPORT_ID_REDACTED>` — real identifiers never belong in this file) and silently
+  overwrote each other for a day. The fix that
   held was not a better guard, it was **a single owner**: `src/deploy_report.py`, and the second
   generator was deleted. `test_there_is_exactly_one_report_generator` fails if a `deploy_report*.py`
   reappears — adding one must be a decision, not something that shows up in a merge. If you do add
@@ -149,6 +150,75 @@ One command: `python deploy_all.py` (idempotent, tenant-guarded).
   the fact. `aiInstructions` is the worst: it routes the Data Agent, so the agent's behaviour changes
   between deploys with no code change. Align the wording across generators, don't just merge it.
 - Terminal PATH can be wiped by venv activation — restore from Machine+User env.
+
+## Public repo — the guard must not become the leak
+This repo is public. `.github/scripts/check_client_leak.py` runs in CI on every branch.
+
+**Detect by shape, never by name.** Two sister repos guard against customer names by
+listing those names in the guard itself — one plainly, one with a letter parenthesised so
+a full-text search misses it and a human does not. A public file enumerating a client
+portfolio is a worse disclosure than the single mention it was written to catch. Every
+rule here matches a form: an unrecognised GUID, an opaque token in front of a Fabric
+service domain, a personal filesystem path, initials-plus-name anchored at the start of a
+display name, a renamed-repo shape. If a name-based check is genuinely needed, read it
+from `CLIENT_DENYLIST` (Actions secret) or a gitignored `.clientdeny`, and **degrade to a
+warning when absent — never a failure**.
+
+**The GUID rule is an allow-list, and that is the point.** The sister rule only flags a
+GUID preceded by an identity label (`tenant_id`, `client_id`). The real report id this
+repo published sat in the middle of a prose sentence, so that rule would have walked past
+it for 27 commits. An allow-list also never has to write the real identifier down in order
+to catch it.
+
+**Scan `git ls-files`, never the working tree** — `__pycache__/*.pyc` and `node_modules`
+embed absolute paths and produce guaranteed false positives.
+
+**Exempt lines, not files.** The guard and its tests must spell out fake leaks to prove
+the rules fire. Exempting the whole file (what the sister repos do) blinds the scanner to
+everything else it contains. The marker here is per-line **and inert outside the guard's
+own two files** (`PROBE_FILES`), so documenting it cannot silence a line and spraying it
+elsewhere does nothing.
+
+**Text rules fire on prose, including your own.** The workspace-prefix rule caught a
+sentence in the README that was *describing* the rule. Reword; do not exempt. A shape rule
+that cannot fire on documentation is a shape rule with a hole in it.
+
+**A finding is a hypothesis, not a verdict — and acting on a wrong one costs content.** The
+allow-list flagged three `github.com/user-attachments/assets/<guid>` URLs in the README and I
+deleted them, which silently removed three screenshots. Those ids address images GitHub was
+already serving from this public repo: public by construction, unrelated to the tenant. A
+deny-list would never have seen them; an allow-list sees *every* identifier, so the burden is
+on the reader to classify each one before removing anything. **Ask what the identifier
+addresses** — a Power BI report in a private tenant is a leak, a CDN asset behind a public
+README is not. Symptom to watch for: a "fix" that deletes rendered content rather than
+replacing a value. Exempt at the **span** of the URL, never at the line, or one image tag
+blinds everything sitting next to it. Both directions are pinned by
+`test_a_github_attachment_url_stays_silent` and
+`test_the_attachment_exemption_covers_the_url_and_nothing_else`.
+
+**Concatenated string literals split a line, and line-scoped rules do not span them.** The
+first version of those tests wrapped the URL across two source lines; the guard then saw a
+bare GUID with no URL around it and failed on the test file itself. Keep any literal a
+line-based rule must match on **one physical line**.
+
+## CI runs on Linux; this repo was written on Windows
+Every `src/*.py` carried `import os, sys, winreg` at module scope for the PATH workaround.
+`winreg` is Windows-only, and the test suite imports those modules directly — so on
+`ubuntu-latest` the whole suite died at collection. **A Windows machine cannot reproduce
+it**, and a fresh-clone rehearsal on Windows proves nothing about the runner. Import it
+under `if sys.platform == "win32"` and make `_restore_path()` return early elsewhere;
+`test_no_src_module_imports_winreg_unconditionally` reads the **AST**, not the text, so a
+comment mentioning winreg is not a false positive.
+
+Spoofing `sys.platform` to fake a Linux run does not work: third-party packages branch on
+it and then call the real OS's stdlib. `"linux"` makes numpy call `os.uname()`, `"darwin"`
+makes urllib import `_scproxy` — both absent on Windows, both failures about the
+simulation rather than about this repo. Check the structure and the behaviour separately,
+and say plainly that the Linux run itself is unverified until CI runs it.
+
+**A skip is a test that did not run.** 28 tests were skipped whenever `data/raw/` was
+missing — including the entire behaviour-before-labels gate. CI regenerates the dataset
+from its seed and fails the job if the summary reports any skip.
 
 ## Never claim "verified"
 Do not write that something works in docs, instructions or agent prompts unless a test output or a

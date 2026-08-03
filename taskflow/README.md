@@ -1,4 +1,4 @@
-# Workspace Task Flow — `CDR - Marketing Campaign`
+# Workspace Task Flow — `Customer 360 Marketing`
 
 The visual canvas at the top of the workspace. It turns a flat list of items into a readable
 story, and lets you click a task to filter the item list down to that stage.

@@ -70,7 +70,7 @@ DATASET_ID = os.getenv("DATASET_ID") or _ST.get("semantic_model_id", "")
 DATA_AGENT_ID = os.getenv("DATA_AGENT_ID") or _ST.get("data_agent_id", "")
 ONTOLOGY_ID = os.getenv("ONTOLOGY_ID") or _ST.get("ontology_id", "")
 
-WORKSPACE_NAME = _config_value("workspace_name", "CDR - Marketing Campaign")
+WORKSPACE_NAME = _config_value("workspace_name", "Customer 360 Marketing")
 SM_NAME = _config_value("semantic_model_name", "SM_Marketing_Analytics")
 RPT_NAME = _config_value("report_name", "RPT_Marketing_Churn")
 CULPRIT = _config_value("culprit_campaign_name", "Black Friday Blast")

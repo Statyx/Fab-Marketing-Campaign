@@ -8,10 +8,18 @@ Also materialises two curated views the whole demo leans on:
 
 Idempotent: the notebook is recreated and re-run; Delta writes use overwrite.
 """
-import os, sys, winreg
+import os, sys
+# The venv activation on this project's Windows machines can wipe PATH, so the registry
+# copy is read back. That fix is Windows-only and `winreg` does not exist elsewhere, so an
+# unconditional import made this module unimportable on Linux - and the tests import it.
+if sys.platform == "win32":
+    import winreg
+
 
 
 def _restore_path():
+    if sys.platform != "win32":
+        return
     parts = []
     for root, sub in [(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
                       (winreg.HKEY_CURRENT_USER, "Environment")]:
