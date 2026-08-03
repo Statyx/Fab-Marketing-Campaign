@@ -22,10 +22,19 @@ Outputs 15 CSVs under data/raw/{crm,marketing,commerce}/ plus a text corpus.
 
 Run:  python generate_data.py
 """
-import os, sys, winreg
+import os, sys
+
+# The venv activation on this project's Windows machines can wipe PATH, so the registry
+# copy is read back. That fix is Windows-only and `winreg` does not exist elsewhere — an
+# unconditional import made this generator unrunnable on Linux, which is why CI could not
+# build the dataset and skipped 28 tests instead of running them.
+if sys.platform == "win32":
+    import winreg
 
 
 def _restore_path():
+    if sys.platform != "win32":
+        return
     parts = []
     for root, sub in [(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
                       (winreg.HKEY_CURRENT_USER, "Environment")]:

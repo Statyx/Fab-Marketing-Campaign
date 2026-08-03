@@ -31,4 +31,9 @@ src/config.yaml
 src/state.json
 .vscode/mcp.json
 
+# Optional local deny-list for .github/scripts/check_client_leak.py (one literal per line).
+# It must never be committed: a public file listing client names is itself the leak.
+# In CI the same list comes from the CLIENT_DENYLIST secret.
+.clientdeny
+
 # (The *.example files ARE committed: src/config.example.yaml, src/state.example.json, .vscode/mcp.example.json)

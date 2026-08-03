@@ -12,6 +12,7 @@ Run BEFORE any deploy:  python -m pytest tests/ -v --tb=short
 import ast
 import base64
 import json
+import os
 import pathlib
 import re
 import sys
@@ -50,7 +51,12 @@ def test_config_has_required_keys(cfg):
 
 
 def test_workspace_name_is_pinned(cfg):
-    assert cfg["workspace_name"] == "CDR - Marketing Campaign"
+    """The repo is public: the workspace name must stay neutral.
+
+    It used to carry the owner's initials as a prefix, which published who ran the demo.
+    Pinning it here is what stops that coming back through config.example.yaml.
+    """
+    assert cfg["workspace_name"] == "Customer 360 Marketing"
 
 
 def test_churn_weights_sum_to_one(cfg):
@@ -1208,7 +1214,55 @@ def test_every_fabric_entrypoint_pins_the_tenant():
         f"Fabric, or a tenant flip reads as a broken artefact")
 
 
-def test_ensure_tenant_is_shared_not_reimplemented():
+def test_no_src_module_imports_winreg_unconditionally():
+    """CI runs on ubuntu-latest, and the suite imports these modules directly.
+
+    Each one carried `import os, sys, winreg` at module scope for the Windows PATH
+    workaround. `winreg` does not exist off Windows, so on the runner every one of those
+    imports raises ModuleNotFoundError at collection and the whole suite collapses — a
+    failure no Windows machine can reproduce, which is why it survived 27 commits.
+
+    This reads the AST, not the text: a comment or a docstring mentioning winreg is not a
+    defect, and a text rule would fire on it. Discovered, not listed — a hand-written list
+    is how the tenant guard went stale.
+    """
+    src = pathlib.Path(__file__).resolve().parents[1] / "src"
+    offenders = []
+    for path in sorted(src.glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in tree.body:  # top level only: nested under `if` is the fix
+            if isinstance(node, ast.Import) and any(
+                a.name.split(".")[0] == "winreg" for a in node.names
+            ):
+                offenders.append(f"{path.name}:{node.lineno}")
+    assert not offenders, (
+        "winreg is Windows-only; import it under `if sys.platform == \"win32\"` or the "
+        f"module cannot be imported on the CI runner: {', '.join(offenders)}")
+
+
+def test_restore_path_is_a_noop_off_windows():
+    """The structural check above says winreg is not imported; this says it is not used."""
+    import importlib
+
+    src = pathlib.Path(__file__).resolve().parents[1] / "src"
+    checked = []
+    for path in sorted(src.glob("*.py")):
+        mod = importlib.import_module(path.stem)
+        fn = getattr(mod, "_restore_path", None)
+        if fn is None:
+            continue
+        before = os.environ.get("PATH", "")
+        real, sys.platform = sys.platform, "linux"
+        try:
+            fn()  # must return before touching winreg or PATH
+        finally:
+            sys.platform = real
+        assert os.environ.get("PATH", "") == before, f"{path.name} edited PATH off Windows"
+        checked.append(path.stem)
+    assert len(checked) >= 10, f"expected the whole deploy family, got {checked}"
+
+
+
     """One implementation, so the guard cannot drift between scripts."""
     import helpers, deploy_all
     assert callable(helpers.ensure_tenant)
@@ -1579,7 +1633,7 @@ def test_the_agent_is_told_not_to_return_whole_entities():
 def test_the_agent_retries_a_query_the_capacity_throttled():
     """A throttled graph query must be retried, not turned into an apology.
 
-    3 Aug 2026, two days before the Orange demo: all 8 ontology probe questions routed
+    Two days before a customer demo: all 8 ontology probe questions routed
     correctly, generated valid GQL, and every single one came back to the user as
     "je ne peux pas acceder a cette information". The step error was:
 

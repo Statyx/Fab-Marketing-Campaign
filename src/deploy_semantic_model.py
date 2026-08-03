@@ -16,10 +16,18 @@ RELATIONSHIP DESIGN — read before adding any relationship:
 
 Run deploy_setup_notebook.py first so the Delta tables exist.
 """
-import os, sys, winreg
+import os, sys
+# The venv activation on this project's Windows machines can wipe PATH, so the registry
+# copy is read back. That fix is Windows-only and `winreg` does not exist elsewhere, so an
+# unconditional import made this module unimportable on Linux - and the tests import it.
+if sys.platform == "win32":
+    import winreg
+
 
 
 def _restore_path():
+    if sys.platform != "win32":
+        return
     parts = []
     for root, sub in [(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
                       (winreg.HKEY_CURRENT_USER, "Environment")]:
