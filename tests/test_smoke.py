@@ -1261,3 +1261,25 @@ def test_the_demo_questions_each_have_a_matching_fewshot():
     for topic in ("motifs de retour", "pourquoi la campagne", "segment concentre",
                   "taux d'ouverture", "panier moyen", "roi des campagnes"):
         assert topic in questions, f"no few-shot covers the demo question '{topic}'"
+
+
+def test_the_agent_may_not_estimate_a_total_from_a_capped_list():
+    """A truncated list answers WHICH, never HOW MANY.
+
+    Observed on the live agent: a GQL list hit the 200-row cap and the answer read
+    "the query already returns more than 200 distinct results, the total exceeds
+    1 500 customers". The true figure was 317. The names it listed were real, so a
+    query had run - what was invented was the total, extrapolated from a cap the
+    answer had just acknowledged. Telling it the cap exists was therefore not
+    enough; it has to be told what to do instead, and which words give the guess
+    away.
+    """
+    text = _agent_module().ai_instructions(False, "Black Friday Blast", 60)
+    lowered = text.lower()
+    assert "a truncated list answers which. it never answers how many." in lowered, \
+        "the agent needs the rule as an instruction, not only as a warning"
+    for hedge in ("more than", "about", "exceeds"):
+        assert hedge in lowered, \
+            f"the hedging word {hedge!r} must be named as forbidden before a number"
+    assert "second query" in lowered, \
+        "the agent must be told to run the scalar aggregate rather than estimate"

@@ -135,8 +135,11 @@ ONT_FEWSHOTS = [
      "WHERE cu.lifecycle_stage = 'at_risk' "
      "RETURN SUM(o.total_amount_eur) AS revenue_at_risk_eur"),
 
-    # The demo's impact question. Without these two the agent has been observed answering
-    # "over 1 500 customers" with a fabricated name list, against a true 317.
+    # The demo's impact question. Observed failure: the list variant hit the 200-row cap and the
+    # answer estimated "over 1 500" against a true 317. The names it listed were real - all ten
+    # verified in the model, all with 4 Black Friday sends - so the list came from a genuine query;
+    # only the total was invented, on top of a truncation the answer itself acknowledged.
+    # The scalar variant below is what a "how many" must match.
     ("Which at-risk customers were reached by the Black Friday Blast?",
      "MATCH (c:Campaign {campaign_name:'Black Friday Blast'})-[:CampaignSentToCustomer]->"
      "(cu:Customer) WHERE cu.lifecycle_stage = 'at_risk' "
@@ -349,7 +352,17 @@ def ai_instructions(ontology_only: bool, culprit_name: str, at_risk: int) -> str
         "NEVER derive a count or a total by counting/summing the rows a GQL query returned - the\n"
         "list is capped at 200 and the figure would be wrong. Numbers come from the semantic model.\n"
         "If you must aggregate in GQL, push COUNT(DISTINCT ...) / SUM(...) into the query and do\n"
-        "NOT add GROUP BY. An edge count is NOT a node count.\n\n"
+        "NOT add GROUP BY. An edge count is NOT a node count.\n"
+        "Observed failure: a list query hit the 200-row cap, and the answer read 'the query already\n"
+        "returns more than 200 distinct results, the total exceeds 1 500 customers'. The true figure\n"
+        "was 317. Acknowledging the cap and then estimating past it is the same error as ignoring it.\n"
+        "So, operationally, when a list you received may be capped:\n"
+        "- do NOT state a total, not even approximately. The words 'more than', 'about', 'exceeds',\n"
+        "  'several hundred' in front of a number you did not read from a query are forbidden.\n"
+        "- run the scalar aggregate as a SECOND query - COUNT(DISTINCT ...) in GQL, or the measure\n"
+        "  in DAX - and quote THAT number.\n"
+        "- if you did not run it, say the list is capped at 200 and that you have no exact total.\n"
+        "A truncated list answers WHICH. It never answers HOW MANY.\n\n"
         "## Domain notes\n"
         f"- Churn applies to BUYERS only. A contact who never ordered is in the 'Prospect' band\n"
         f"  with no churn score - that is a conversion problem, not a churn problem.\n"
