@@ -80,6 +80,12 @@ CULPRIT = _config_value("culprit_campaign_name", "Black Friday Blast")
 # Measured 3 Aug 2026: still refused at 45s, answered at 150s. 6 x 25s covers that.
 BUSY_RETRIES = 6
 BUSY_WAIT_S = 25
+
+# The portal admits ONE question at a time, because all four personas sit on the same
+# agent and the same sticky thread. See the note in agent_chat: overlapping questions
+# swap their answers. Module-level so every persona shares it - a per-persona lock
+# would let Direction and Marketing collide exactly as before.
+_ASK_LOCK = asyncio.Lock()
 # Landing-page counters come from the generator's own volumes, so they can never
 # drift from the data that was actually generated.
 DEMO_COUNTS = {"customers": _config_int("customers", 0),
@@ -714,6 +720,24 @@ async def agent_chat(agent_key: str, req: ChatRequest):
 
     base = _agent_base(AGENTS[agent_key]["id"])
 
+    # One question at a time, for the whole portal - the four personas share ONE
+    # DATA_AGENT_ID and one sticky thread, so "concurrent" questions are not merely
+    # slow, they are WRONG. Proven 3 Aug 2026: two questions fired 0.4s apart both
+    # returned HTTP 200 in 54.6s, and BOTH answers were about the second question -
+    # asked alone, the first one answers correctly ("825 clients a risque"). Matching
+    # the reply by run_id (below) cannot save this: the contamination happens earlier,
+    # at the message level. Both user messages land in the same thread before either
+    # run starts, and each run answers the newest message it finds there. The caller
+    # gets a confident, well-formed answer to somebody else's question - the worst
+    # possible failure on stage, because nothing about it looks like a failure.
+    # Serialising costs nothing real: the service already refuses concurrent runs on
+    # one agent ("A run is already in progress"), so the wait happens either way.
+    async with _ASK_LOCK:
+        return await _run_question(agent_key, base, req)
+
+
+async def _run_question(agent_key: str, base: str, req: ChatRequest) -> ChatResponse:
+    """The actual exchange with the Data Agent. Callers must hold `_ASK_LOCK`."""
     async with httpx.AsyncClient(timeout=120) as client:
         headers = fabric_headers()
         params = agent_params()

@@ -2032,6 +2032,57 @@ def test_a_busy_agent_is_waited_out_not_purged():
         f"at 150s, so anything under ~120s gives up while the agent is still working")
 
 
+def test_two_questions_cannot_overlap_and_swap_their_answers():
+    """Overlapping questions do not fail - they return each other's answer.
+
+    Proven live through the portal on 3 Aug 2026: two questions fired 0.4s apart both
+    returned HTTP 200 in 54.6s, and both answers were about the SECOND question. Asked
+    on its own, the first one answers correctly ("825 clients a risque de churn").
+
+    Matching the reply by run_id does not prevent this and is not the fix: the two user
+    messages land in the same sticky thread before either run starts, so each run answers
+    the newest message it finds. The reply is correctly attributed to a run that was fed
+    the wrong question. On stage it is the worst failure available - a confident,
+    well-formed, entirely wrong answer, with nothing about it that looks like an error.
+
+    So the portal admits one question at a time. The lock must be MODULE-level: the four
+    personas share one DATA_AGENT_ID, so a per-request or per-persona lock leaves
+    Direction and Marketing colliding exactly as before.
+    """
+    src = (ROOT / "portal" / "backend" / "main.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+
+    locks = [n.targets[0].id for n in tree.body
+             if isinstance(n, ast.Assign)
+             and isinstance(n.targets[0], ast.Name)
+             and isinstance(n.value, ast.Call)
+             and ast.unparse(n.value.func) == "asyncio.Lock"]
+    assert locks, ("the ask path must be serialised by a module-level asyncio.Lock; a lock "
+                   "created inside the handler is a new lock per request and guards nothing")
+
+    handler = next((n for n in ast.walk(tree)
+                    if isinstance(n, ast.AsyncFunctionDef) and n.name == "agent_chat"), None)
+    assert handler is not None, "agent_chat disappeared - this guard must be re-aimed"
+
+    held = [ast.unparse(item.context_expr)
+            for node in ast.walk(handler) if isinstance(node, ast.AsyncWith)
+            for item in node.items]
+    assert any(name in held for name in locks), (
+        f"agent_chat must run inside `async with {locks[0]}` - without it two clicks "
+        f"return each other's answers")
+
+    # The lock has to cover the exchange, not just be entered somewhere: the run must be
+    # started AND read back before another question may post into the same thread.
+    exchange = next((n for n in ast.walk(tree)
+                     if isinstance(n, ast.AsyncFunctionDef) and n.name == "_run_question"), None)
+    assert exchange is not None, (
+        "the exchange must live in its own function called under the lock, so that "
+        "posting the message, running it and reading the answer cannot be interleaved")
+    body = ast.unparse(exchange)
+    for needle in ("/messages", "/runs"):
+        assert needle in body, f"{needle} must sit inside the locked exchange, not outside it"
+
+
 # ── The portal's text size ───────────────────────────────────────────────────
 # 3 Aug 2026, two days before the demo: "la police de l'application est un peu petite".
 # Body text was 13.5px, read from several metres on a projector. The fix is not 71 edited
