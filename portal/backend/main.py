@@ -10,7 +10,7 @@ Uses the OpenAI Assistants API shape exposed by Fabric Data Agents, and
 AzureCliCredential (your `az login`) — no service principal needed.
 """
 
-import os, asyncio, httpx, logging, json, base64, re, threading, time as _time, traceback
+import os, sys, asyncio, httpx, logging, json, base64, re, threading, time as _time, traceback
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -18,7 +18,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
-import trace_source
+# trace_source sits next to this file. Whether it is importable depends on HOW uvicorn
+# was launched - `backend.main:app` from portal/ puts portal/ on sys.path, not
+# portal/backend/ - and the portal then dies on startup with ModuleNotFoundError while
+# the code itself is fine. Pinning the directory makes the import launch-independent.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import trace_source  # noqa: E402
 
 # ── Config ───────────────────────────────────────────────────
 # src/state.json is the source of truth, so the portal can never point at a stale or
@@ -523,14 +528,15 @@ async def agent_chat(agent_key: str, req: ChatRequest):
             raise HTTPException(502, f"Assistant creation failed: {asst_resp.status_code} {asst_resp.text[:200]}")
         assistant_id = asst_resp.json()["id"]
 
-        thread_resp = await client.post(f"{base}/threads", headers=headers, params=params, json={})
-        _raise_if_throttled(thread_resp)
-        if thread_resp.status_code not in (200, 201):
-            raise HTTPException(502, f"Thread creation failed: {thread_resp.status_code} {thread_resp.text[:200]}")
-        thread_id = thread_resp.json()["id"]
+        async def _open_thread() -> str:
+            resp = await client.post(f"{base}/threads", headers=headers, params=params, json={})
+            _raise_if_throttled(resp)
+            if resp.status_code not in (200, 201):
+                raise HTTPException(502, f"Thread creation failed: {resp.status_code} {resp.text[:200]}")
+            return resp.json()["id"]
 
-        try:
-            log.warning(f"[{agent_key}] Q: {req.message[:80]}")
+        async def _attempt(thread_id: str):
+            """Run the question once on this thread. Returns (answer, steps, trace, status)."""
             msg_resp = await client.post(f"{base}/threads/{thread_id}/messages",
                                          headers=headers, params=params,
                                          json={"role": "user", "content": req.message})
@@ -560,9 +566,9 @@ async def agent_chat(agent_key: str, req: ChatRequest):
             answer = ""
             if msgs_resp.status_code == 200:
                 for msg in msgs_resp.json().get("data", []):
-                    # Fabric hands EVERY caller the same thread: POST /threads returns
-                    # one shared id, so this list holds other questions' answers too.
-                    # Proven 3 Aug 2026 - two threads created back to back came back as
+                    # POST /threads returns ONE sticky thread per agent, reused by every
+                    # caller, so this list holds other questions' answers too. Proven
+                    # 3 Aug 2026 - two threads created back to back came back as
                     # thread_z2l0nmctAMLMaFU3rDTpnpOq both times, and a brand-new thread
                     # already listed 20 messages from earlier portal calls.
                     # Taking the newest assistant message therefore answers the wrong
@@ -588,20 +594,36 @@ async def agent_chat(agent_key: str, req: ChatRequest):
                             query_trace.append(ToolTrace(tool=fn,
                                                          arguments=fn_obj.get("arguments", ""),
                                                          output=(fn_obj.get("output", "") or "")[:5000]))
+            return answer, steps, query_trace, run_status
 
-            if not answer:
-                raise HTTPException(504, "L'agent n'a pas produit de réponse pour cette question "
-                                         f"(statut du run : {run_status or 'inconnu'}). Reposez la question.")
+        # That sticky thread eventually reaches a state where EVERY run on it dies in ~2s
+        # with {"code":"server_error"} before a single tool call - both datasources, any
+        # instruction text. Measured 3 Aug 2026: 0/8 novel questions with two different
+        # instruction sets, while the semantic model still answered DAX directly (HTTP 200)
+        # on an Active F16, and a throwaway agent built from the same definition answered
+        # first time - on a thread of its own. DELETE /threads/{id} is the cure: the next
+        # POST hands back a genuinely new id and the agent recovers (3/3 right after).
+        # So: purge, then ONE retry. Not on every call - deleting a thread another persona
+        # is mid-run on would break that run, which is why this is a recovery path only.
+        thread_id = await _open_thread()
+        log.warning(f"[{agent_key}] Q: {req.message[:80]}")
+        answer, steps, query_trace, run_status = await _attempt(thread_id)
 
-            log.warning(f"[{agent_key}] DONE len={len(answer)} status={run_status} steps={steps}")
-            src = trace_source.describe([t.model_dump() for t in query_trace])
-            return ChatResponse(answer=answer, steps=steps, queryTrace=query_trace,
-                                followUps=_generate_followups(agent_key, req.message, answer),
-                                **src)
-        finally:
-            # No thread delete: POST /threads returns one shared id for every caller,
-            # so this would delete the conversation another persona's run is using.
-            pass
+        if not answer:
+            log.warning(f"[{agent_key}] run {run_status or 'inconnu'} - purge du fil {thread_id}, 1 nouvel essai")
+            await client.delete(f"{base}/threads/{thread_id}", headers=headers, params=params)
+            thread_id = await _open_thread()
+            answer, steps, query_trace, run_status = await _attempt(thread_id)
+
+        if not answer:
+            raise HTTPException(504, "L'agent n'a pas produit de réponse pour cette question "
+                                     f"(statut du run : {run_status or 'inconnu'}). Reposez la question.")
+
+        log.warning(f"[{agent_key}] DONE len={len(answer)} status={run_status} steps={steps}")
+        src = trace_source.describe([t.model_dump() for t in query_trace])
+        return ChatResponse(answer=answer, steps=steps, queryTrace=query_trace,
+                            followUps=_generate_followups(agent_key, req.message, answer),
+                            **src)
 
 
 # ── Power BI embed (user-owns-data) ──────────────────────────

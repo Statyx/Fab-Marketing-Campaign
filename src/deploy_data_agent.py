@@ -148,6 +148,41 @@ ONT_FEWSHOTS = [
      "MATCH (c:Campaign {campaign_name:'Black Friday Blast'})-[:CampaignSentToCustomer]->"
      "(cu:Customer) WHERE cu.lifecycle_stage = 'at_risk' "
      "RETURN COUNT(DISTINCT cu.customer_id) AS at_risk_reached"),
+
+    # --- multi-hop, aggregated, capped ------------------------------------
+    # The ones a semantic model cannot answer: they walk two or three edges.
+    # Every one AGGREGATES and LIMITs, because the graph's value on stage is the
+    # PATH, not the volume - and because a wide result kills the run outright
+    # (160 588 characters of entity JSON, every step green, 3 Aug 2026).
+    ("Which B2B accounts have the most customers reached by the Black Friday Blast?",
+     "MATCH (c:Campaign {campaign_name:'Black Friday Blast'})-[:CampaignSentToCustomer]->"
+     "(cu:Customer), (cu)-[:CustomerBelongsToAccount]->(a:Account) "
+     "RETURN a.account_name, a.industry, COUNT(DISTINCT cu.customer_id) AS customers_reached "
+     "ORDER BY customers_reached DESC LIMIT 10"),
+    ("Which industries were most affected by the Black Friday Blast?",
+     "MATCH (c:Campaign {campaign_name:'Black Friday Blast'})-[:CampaignSentToCustomer]->"
+     "(cu:Customer), (cu)-[:CustomerBelongsToAccount]->(a:Account) "
+     "RETURN a.industry, COUNT(DISTINCT cu.customer_id) AS customers_reached "
+     "ORDER BY customers_reached DESC LIMIT 10"),
+    ("Which segments did the Black Friday Blast actually reach?",
+     "MATCH (c:Campaign {campaign_name:'Black Friday Blast'})-[:CampaignSentToCustomer]->"
+     "(cu:Customer), (cu)-[:CustomerInSegment]->(s:Segment) "
+     "RETURN s.segment_name, COUNT(DISTINCT cu.customer_id) AS customers_reached "
+     "ORDER BY customers_reached DESC LIMIT 10"),
+    ("Which product categories were bought by customers reached by the Black Friday Blast?",
+     "MATCH (c:Campaign {campaign_name:'Black Friday Blast'})-[:CampaignSentToCustomer]->"
+     "(cu:Customer), (o:Order)-[:OrderPlacedByCustomer]->(cu), "
+     "(o)-[:OrderContainsProduct]->(p:Product) "
+     "RETURN p.category, COUNT(DISTINCT o.order_id) AS orders ORDER BY orders DESC LIMIT 10"),
+    ("Which B2B accounts concentrate the most negative support interactions?",
+     "MATCH (i:Interaction)-[:InteractionWithCustomer]->(cu:Customer), "
+     "(cu)-[:CustomerBelongsToAccount]->(a:Account) WHERE i.sentiment = 'negative' "
+     "RETURN a.account_name, a.industry, COUNT(i.interaction_id) AS negative_interactions "
+     "ORDER BY negative_interactions DESC LIMIT 10"),
+    ("How many customers received both the Black Friday Blast and Cyber Monday?",
+     "MATCH (c1:Campaign {campaign_name:'Black Friday Blast'})-[:CampaignSentToCustomer]->"
+     "(cu:Customer), (c2:Campaign {campaign_name:'Cyber Monday'})-[:CampaignSentToCustomer]->(cu) "
+     "RETURN COUNT(DISTINCT cu.customer_id) AS customers_in_both"),
 ]
 
 
@@ -299,6 +334,36 @@ SM_FEWSHOTS = [
 
 
 def ai_instructions(ontology_only: bool, culprit_name: str, at_risk: int) -> str:
+    # Shared between both branches on purpose. Instruction text lands in the tenant,
+    # so wording that differs between call sites flips the live agent's behaviour on
+    # every alternating deploy, invisibly.
+    payload_rule = (
+        "## Keep every GQL result SMALL\n"
+        "RETURN scalar properties only - node.`property` - one line per property.\n"
+        "NEVER return a bare node (RETURN node_Account) and never return a whole entity: the\n"
+        "engine then emits a full JSON document of that entity on EVERY row. Observed 3 Aug 2026:\n"
+        "a Customer-to-Account query came back with an `account_json` column and a 160 588-character\n"
+        "payload, where the same question projecting the seven properties it needed came back small.\n"
+        "Two reasons to stay narrow, both real: results are CAPPED AT 200 ROWS, so a wide list is\n"
+        "silently incomplete; and an answer nobody can read on a slide is not better for being long.\n"
+        "So: project only the properties you will quote, and keep the row count low - aggregate with\n"
+        "COUNT(DISTINCT ...), or ORDER BY then LIMIT 20.\n\n"
+    )
+    # The graph is a FEDERATED query and the capacity throttles it under load. The agent's
+    # default behaviour is to give up and apologise, which on stage reads as "the demo is
+    # broken" when the data is fine and the wait is one second. Verbatim, 3 Aug 2026:
+    #   "Failed to execute Ontology query with error \"The federated query failed to execute
+    #    due to capacity throttling. Please try again after 1 second(s).\""
+    # 8 questions out of 8 routed to the ontology correctly and all 8 died here.
+    throttle_rule = (
+        "## If a query fails with capacity throttling, RUN IT AGAIN\n"
+        "A query may come back with 'The federated query failed to execute due to capacity\n"
+        "throttling. Please try again after N second(s).' This is NOT a data problem and NOT a\n"
+        "permissions problem: the data is there and the query is valid. Execute the SAME query\n"
+        "again - up to three attempts - before concluding anything. Only if it still fails should\n"
+        "you say the source is temporarily busy, and then say exactly that: the service is busy,\n"
+        "not that the information is unavailable or does not exist.\n\n"
+    )
     head = (
         "You are the Marketing Churn Agent for a retailer. You answer questions about customers, "
         "segments, campaigns, orders and CHURN RISK. ALWAYS answer by querying a source - NEVER "
@@ -316,6 +381,7 @@ def ai_instructions(ontology_only: bool, culprit_name: str, at_risk: int) -> str
             "Root cause for a customer: traverse that edge in reverse.\n\n"
             "NOTE: the churn profile (churn_risk_score, clv_eur, engagement_rate) is NOT in this "
             "graph. If asked for it, say the data is not available in this source.\n\n"
+            + payload_rule + throttle_rule +
             "## CRITICAL - results are truncated at 200 rows\n"
             "NEVER answer a 'how many' or 'how much' question by counting or summing the rows you "
             "received: the list is capped at 200 and the number would be wrong. Push the aggregate "
@@ -348,6 +414,7 @@ def ai_instructions(ontology_only: bool, culprit_name: str, at_risk: int) -> str
         "HOW things connect or WHO is affected -> Ontology (GQL).\n"
         "For 'detect then diagnose' questions: get the figure from the semantic model, then\n"
         "traverse the graph from the offending campaign for the impacted customers.\n\n"
+        + payload_rule + throttle_rule +
         "## Ontology results are truncated at 200 rows\n"
         "NEVER derive a count or a total by counting/summing the rows a GQL query returned - the\n"
         "list is capped at 200 and the figure would be wrong. Numbers come from the semantic model.\n"

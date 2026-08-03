@@ -1393,6 +1393,25 @@ def test_the_chat_response_exposes_the_source_to_the_front_end():
         "the source must be computed, not left for the front end to re-derive"
 
 
+def test_the_portal_imports_trace_source_whatever_the_launch_style():
+    """The portal died on startup with ModuleNotFoundError while the code was fine.
+
+    `python -m uvicorn backend.main:app` from portal/ puts portal/ on sys.path but NOT
+    portal/backend/, so a bare `import trace_source` resolves only when the server is
+    launched from inside backend/. The previous launch happened to be that style, so the
+    breakage stayed hidden until the server was restarted a different way - on demo day
+    that is a portal that will not start, with a green test suite.
+
+    This is a static guard, so it proves the fix is present, not that every launch style
+    works; the two launch styles were checked by hand when the fix went in.
+    """
+    text = (PORTAL / "backend" / "main.py").read_text(encoding="utf-8")
+    pin = text.find("sys.path.insert(0, str(Path(__file__).resolve().parent))")
+    imp = text.find("import trace_source")
+    assert pin != -1, "main.py must pin its own directory on sys.path"
+    assert pin < imp, "the sys.path pin must come BEFORE `import trace_source`"
+
+
 def test_the_answer_is_tied_to_our_own_run_not_to_the_newest_message():
     """Fabric gives every caller the SAME thread, so the newest answer is not ours.
 
@@ -1404,10 +1423,140 @@ def test_the_answer_is_tied_to_our_own_run_not_to_the_newest_message():
 
     A demo cannot survive answering the wrong question convincingly. Only run_id
     ties a message to the run we started.
+
+    CORRECTION, same day, later: this test also forbade DELETE /threads, on the
+    grounds that the thread is shared and deleting it would destroy a concurrent
+    run's conversation. That reason still holds - which is why the delete must NOT
+    be unconditional - but the blanket ban was wrong, and it hid the cure.
+
+    That sticky thread eventually reaches a state where EVERY run on it fails in
+    ~2s with {"code":"server_error"} before a single tool call. Measured: 0/8 novel
+    questions across two different instruction sets, while the semantic model still
+    answered DAX directly (HTTP 200, 5 083 349,74 EUR) on an Active F16 - and a
+    throwaway agent built from the very same definition answered first time, on a
+    thread of its own. DELETE then POST returned a genuinely new id and the original
+    agent recovered: 3/3 immediately after.
+
+    So the rule is narrower than either extreme: purge only when our run produced
+    no answer, then retry once.
     """
     text = (PORTAL / "backend" / "main.py").read_text(encoding="utf-8")
     assert 'msg.get("run_id") == run_id' in text, \
         "the assistant message must be selected by run_id, never by recency"
-    assert "await client.delete(f\"{base}/threads/{thread_id}\"" not in text, \
-        "deleting the shared thread would destroy a concurrent run's conversation"
     assert "run_status" in text, "an incomplete run must be reported, not papered over"
+
+    lines = text.splitlines()
+    deletes = [i for i, ln in enumerate(lines) if "client.delete(f\"{base}/threads/" in ln]
+    assert deletes, "no thread purge: a poisoned thread would kill every later question"
+    for i in deletes:
+        guard = [j for j in range(max(0, i - 4), i) if "if not answer:" in lines[j]]
+        assert guard, (f"line {i+1}: the thread purge must sit on the no-answer recovery "
+                       "path - deleting on every call would break a concurrent run")
+
+
+# --- ontology few-shots ---------------------------------------------------
+
+def _ontology_module():
+    import deploy_ontology
+    return deploy_ontology
+
+
+def test_ontology_fewshots_only_walk_entities_and_edges_that_exist():
+    """A renamed entity or relationship rots every few-shot that used it.
+
+    Nothing fails loudly: the agent keeps writing GQL against a label the graph no
+    longer has, and simply answers "no data available" - which reads on stage as
+    "the demo has no data", not as "the query was wrong".
+    """
+    ont = _ontology_module()
+    entities = {name for name, *_ in ont.ENTITIES}
+    edges = {name for name, *_ in ont.RELATIONSHIPS}
+
+    for question, query in _agent_module().ONT_FEWSHOTS:
+        for label in re.findall(r":([A-Z][A-Za-z]+)\s*[{)]", query):
+            assert label in entities, f"{question}: unknown entity :{label}"
+        for edge in re.findall(r"-\[\s*(?:\w+)?:([A-Za-z]+)\s*\]", query):
+            assert edge in edges, f"{question}: unknown relationship :{edge}"
+
+
+def test_ontology_fewshots_never_return_a_bare_node():
+    """Returning a node emits that entity's full JSON on every row.
+
+    Measured 3 Aug 2026: an account-per-customer query came back carrying an
+    `account_json` column, the execute payload reached 160 588 characters, every
+    tool step reported success - and the run still died at the answer step with
+    "Sorry, something went wrong." Projecting the seven properties it needed made
+    the same question complete. A few-shot showing the wide form teaches the agent
+    to reproduce the crash.
+    """
+    for question, query in _agent_module().ONT_FEWSHOTS:
+        returned = query.split("RETURN", 1)[1] if "RETURN" in query else ""
+        for item in returned.split(" ORDER BY")[0].split(","):
+            item = item.strip().split(" AS ")[0].strip()
+            if not item or "(" in item or item.upper() == "DISTINCT":
+                continue           # aggregate or DISTINCT keyword, not a projection
+            item = item.replace("DISTINCT ", "").strip()
+            assert "." in item, (
+                f"{question}: RETURN {item} yields the whole node - project a property")
+
+
+def test_multi_hop_ontology_fewshots_bound_their_result():
+    """The graph's value on stage is the PATH, not the volume.
+
+    A walk across several edges fans out fast, and an unbounded list both hits the
+    200-row cap - which makes every count derived from it wrong - and fills a slide
+    with rows nobody reads. So a multi-hop few-shot must narrow itself one of three
+    ways: aggregate it, LIMIT it, or start from one named instance.
+
+    The anchor is the weakest of the three and is accepted deliberately, not
+    because it is always small: {campaign_name:'Black Friday Blast'} reaches 3 959
+    customers. It is accepted because it pins the traversal to a subject the
+    presenter has just named, which is what makes the path legible. Width is
+    covered separately by the bare-node test - that is the one guarding the crash.
+    """
+    for question, query in _agent_module().ONT_FEWSHOTS:
+        hops = len(re.findall(r"-\[", query))
+        if hops < 2:
+            continue
+        upper = query.upper()
+        bounded = ("COUNT(" in upper or "SUM(" in upper or "LIMIT" in upper
+                   or re.search(r"\{\s*\w+\s*:\s*'[^']+'\s*\}", query))
+        assert bounded, (
+            f"{question}: {hops}-hop few-shot must aggregate, LIMIT, or anchor on an instance")
+
+
+def test_the_agent_is_told_not_to_return_whole_entities():
+    agent = _agent_module()
+    for ontology_only in (True, False):
+        text = agent.ai_instructions(ontology_only, "Black Friday Blast", 317)
+        assert "NEVER return a bare node" in text, "the payload rule must reach the tenant"
+        assert "160 588" in text, "keep the evidence with the rule, or it reads as a preference"
+
+
+def test_the_agent_retries_a_query_the_capacity_throttled():
+    """A throttled graph query must be retried, not turned into an apology.
+
+    3 Aug 2026, two days before the Orange demo: all 8 ontology probe questions routed
+    correctly, generated valid GQL, and every single one came back to the user as
+    "je ne peux pas acceder a cette information". The step error was:
+
+        Failed to execute Ontology query with error "The federated query failed to
+        execute due to capacity throttling. Please try again after 1 second(s)."
+
+    The data was fine, the query was fine, and the source itself said to wait one second.
+    The agent's default is to give up on the first failure, which on stage is
+    indistinguishable from a broken demo. So the retry instruction is not a nicety: it is
+    the difference between the graph working and the graph appearing to have no data.
+
+    Guarded in BOTH branches because instruction text is tenant state - a rule present in
+    one call site and absent in the other flips the live agent on alternating deploys.
+    """
+    agent = _agent_module()
+    for ontology_only in (True, False):
+        text = agent.ai_instructions(ontology_only, "Black Friday Blast", 317)
+        assert "capacity throttling" in text, (
+            f"ontology_only={ontology_only}: the agent must recognise a throttled query")
+        assert "again" in text.lower(), (
+            f"ontology_only={ontology_only}: recognising it is useless without retrying")
+        assert "not that the information is unavailable" in text, (
+            f"ontology_only={ontology_only}: a throttle must never be reported as missing data")
