@@ -1959,3 +1959,74 @@ def test_a_busy_agent_is_waited_out_not_purged():
     assert total >= 120, (
         f"the wait budget is {total}s; the observed lock was still held at 45s and clear "
         f"at 150s, so anything under ~120s gives up while the agent is still working")
+
+
+# ── The portal's text size ───────────────────────────────────────────────────
+# 3 Aug 2026, two days before the demo: "la police de l'application est un peu petite".
+# Body text was 13.5px, read from several metres on a projector. The fix is not 71 edited
+# numbers, it is one knob - and a knob only stays a knob if nothing escapes it.
+
+_PORTAL_HTML = ROOT / "portal" / "static" / "index.html"
+
+
+def _portal_scale() -> float:
+    """The html font-size percentage, as a multiplier. Every rem in the page rides on it."""
+    m = re.search(r"html\s*\{[^}]*font-size:\s*([\d.]+)%", _PORTAL_HTML.read_text(encoding="utf-8"))
+    assert m, ("the portal must set its root font-size as a percentage on html - that is the "
+               "single knob every rem is relative to")
+    return float(m.group(1)) / 100
+
+
+def test_every_portal_font_size_rides_on_the_one_knob():
+    """A single px font-size silently opts that element out of the scale.
+
+    The page had 71 hard-coded px sizes from 8 to 38. Scaling them by hand is 71 chances
+    to miss one, and a missed one is invisible until someone reads the screen from the back
+    of the room - which is the only place it matters. They are now rem, so the knob moves
+    all of them or none.
+
+    SVG `font-size="24"` attributes are deliberately not covered: they are user units inside
+    a viewBox and already scale with the drawing, not with the root font size.
+    """
+    html = _PORTAL_HTML.read_text(encoding="utf-8")
+    stragglers = re.findall(r"font-size:\s*[\d.]+px", html)
+    assert not stragglers, (
+        f"{len(stragglers)} font-size still in px ({stragglers[:5]}): px ignores the root "
+        f"scale, so this text stays small while everything around it grows")
+
+    assert _portal_scale() >= 1.10, (
+        f"the scale is {_portal_scale():.2f}; below ~1.10 the body text falls back under 15px, "
+        f"which is what was reported as too small to read on a projector")
+
+
+def test_a_fixed_height_portal_box_still_fits_its_text():
+    """Text that grows inside a box that does not is the Power BI clipping bug, in CSS.
+
+    Same arithmetic as validate_layout(): a line box is proportional (~1.35 for this kind of
+    UI font) and the chrome around it is a constant (~8px) - one multiplier cannot express
+    both. Checked at the CURRENT scale, so raising the knob later fails here rather than on
+    stage. Only `height` counts: min-height grows and max-height pairs with overflow.
+    """
+    html = _PORTAL_HTML.read_text(encoding="utf-8")
+    style = html[html.index("<style>"):html.index("</style>")]
+    scale = _portal_scale()
+
+    checked = 0
+    for m in re.finditer(r"([^{}]+)\{([^}]*)\}", style):
+        body = m.group(2)
+        h = re.search(r"(?<![a-z-])height:\s*(\d+)px", body)
+        fs = re.search(r"font-size:\s*([\d.]+)rem", body)
+        if not (h and fs):
+            continue
+        checked += 1
+        box = int(h.group(1))
+        pt = float(fs.group(1)) * 16 * scale
+        need = pt * 1.35 + 8
+        sel = m.group(1).strip().splitlines()[-1].strip()
+        assert box >= need, (
+            f"{sel}: box is {box}px but {pt:.1f}px text needs {need:.1f}px - it will render "
+            f"clipped, and the browser will neither shrink the font nor warn")
+    assert checked >= 4, (
+        f"only {checked} fixed-height text boxes examined; the regex has stopped matching "
+        f"the stylesheet and this guard is passing on nothing")
+
