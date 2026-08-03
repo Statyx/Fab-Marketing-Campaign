@@ -32,7 +32,8 @@ from pathlib import Path
 
 import requests
 from helpers import (load_config, load_state, save_state, get_fabric_token,
-                     fabric_headers, find_item, poll_operation, print_step)
+                     fabric_headers, find_item, poll_operation, print_step,
+                     ensure_tenant)
 
 SRC = Path(__file__).parent
 RAW = SRC.parent / "data" / "raw"
@@ -106,6 +107,7 @@ def upload_text_corpus(ws_id, lh_id, token, limit_notes=400):
 
 def main():
     cfg = load_config(); state = load_state()
+    ensure_tenant(cfg)
     api = cfg["fabric_api_base"]; ws = state["workspace_id"]; name = cfg["lakehouse_name"]
     token = get_fabric_token(); h = fabric_headers(token)
 

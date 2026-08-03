@@ -27,11 +27,12 @@ if hasattr(sys.stdout, "reconfigure"):
 
 import requests
 from helpers import (load_config, load_state, save_state, get_fabric_token,
-                     fabric_headers, poll_operation, print_step)
+                     fabric_headers, poll_operation, print_step, ensure_tenant)
 
 
 def main():
     cfg = load_config(); state = load_state()
+    ensure_tenant(cfg)
     api = cfg["fabric_api_base"]; name = cfg["workspace_name"]; cap = cfg["capacity_id"]
     token = get_fabric_token(); h = fabric_headers(token)
 

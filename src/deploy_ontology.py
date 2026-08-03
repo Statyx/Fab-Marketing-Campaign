@@ -44,7 +44,7 @@ import uuid
 
 import requests
 from helpers import (get_fabric_token, fabric_headers, load_config, load_state,
-                     save_state, poll_operation, find_item)
+                     save_state, poll_operation, find_item, ensure_tenant)
 
 VT = {"string": "String", "int64": "BigInt", "double": "Double",
       "datetime": "DateTime", "bool": "Boolean"}
@@ -176,6 +176,7 @@ def build_parts(workspace_id, lakehouse_id, ontology_name):
 
 def main():
     cfg = load_config(); state = load_state()
+    ensure_tenant(cfg)
     api = cfg["fabric_api_base"]; ws = state["workspace_id"]; lh = state["lakehouse_id"]
     name = cfg["ontology_name"]
     token = get_fabric_token(); headers = fabric_headers(token)

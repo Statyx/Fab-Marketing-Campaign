@@ -30,7 +30,8 @@ if hasattr(sys.stdout, "reconfigure"):
 
 from pathlib import Path
 
-from helpers import (load_config, load_state, save_state, get_fabric_token, print_step)
+from helpers import (load_config, load_state, save_state, get_fabric_token, print_step,
+                     ensure_tenant)
 from notebook_utils import recreate_notebook, run_notebook
 
 NOTEBOOK_NAME = "NB_Setup_Customer360"
@@ -146,6 +147,7 @@ print("DONE")
 
 def main():
     cfg = load_config(); state = load_state()
+    ensure_tenant(cfg)
     ws = state["workspace_id"]; lh = state["lakehouse_id"]; lh_name = cfg["lakehouse_name"]
     token = get_fabric_token()
 

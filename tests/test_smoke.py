@@ -13,6 +13,7 @@ import ast
 import base64
 import json
 import pathlib
+import re
 import sys
 
 import pandas as pd
@@ -1131,15 +1132,37 @@ def test_readback_parses_the_dax_not_just_the_name(dsm, monkeypatch):
 # symptom is not "auth expired" but "this item does not exist / 401" on a
 # perfectly healthy artefact. It once turned a working report into a fake 0/35.
 
+def _runnable_scripts():
+    """Every src/*.py that can be launched on its own and talks to the tenant.
+
+    This used to be a hand-written list of three modules. Seven others were
+    missing the guard and the test stayed green - the same scope defect the
+    guard itself exists to catch. Discover them instead of naming them.
+    """
+    import pathlib
+    src = pathlib.Path(__file__).resolve().parents[1] / "src"
+    for path in sorted(src.glob("*.py")):
+        body = path.read_text(encoding="utf-8")
+        if "__main__" not in body or not re.search(r"^def main\(", body, re.M):
+            continue
+        # A script needs the guard when it reaches Fabric / Power BI, directly
+        # or through helpers.
+        if "get_fabric_token" in body or "get_powerbi_token" in body:
+            yield path.stem, body
+
+
 def test_every_fabric_entrypoint_pins_the_tenant():
     import inspect
-    import deploy_all, deploy_report, validate_report
+    import importlib
 
-    for mod in (deploy_all, deploy_report, validate_report):
-        src = inspect.getsource(mod.main)
-        assert "ensure_tenant" in src, (
-            f"{mod.__name__}.main() must pin the az subscription before "
-            f"calling Fabric, or a tenant flip reads as a broken artefact")
+    missing = []
+    for name, _ in _runnable_scripts():
+        mod = importlib.import_module(name)
+        if "ensure_tenant" not in inspect.getsource(mod.main):
+            missing.append(name)
+    assert not missing, (
+        f"{', '.join(missing)}: main() must pin the az subscription before calling "
+        f"Fabric, or a tenant flip reads as a broken artefact")
 
 
 def test_ensure_tenant_is_shared_not_reimplemented():
@@ -1160,3 +1183,81 @@ def test_ensure_tenant_warns_instead_of_crashing_without_config(capsys):
     import helpers
     helpers.ensure_tenant({})
     assert "az_subscription" in capsys.readouterr().out
+
+
+# --- data agent grounding -------------------------------------------------
+# Observed live on 3 Aug 2026: asked "why does Black Friday Blast generate so
+# many unsubscribes", the agent executed NO query (trace held only
+# analyze.database.fewshots.loading) and answered anyway. Asked which customers
+# it hit, it invented a name list and "over 1 500" against a true 317.
+# Few-shots are query TEMPLATES - they carry no results - so a confident answer
+# with no execute step is fabricated, not recalled.
+
+def _agent_module():
+    import deploy_data_agent
+    return deploy_data_agent
+
+
+def test_fewshot_queries_only_reference_objects_that_exist(model_index):
+    """A renamed measure silently rots every few-shot that used it."""
+    tables = model_index["tables"]
+    known_measures = {m for t in tables.values() for m in t["measures"]}
+
+    for fs in _agent_module().SM_FEWSHOTS:
+        q = fs["query"]
+        # SUMMARIZECOLUMNS / ROW name their outputs: "Clients", COUNTROWS(...).
+        # Those names are then referenced as [Clients] in ORDER BY - they are
+        # local aliases, not model measures.
+        local = set(re.findall(r'"([^"]+)"\s*,', q))
+        for table, column in re.findall(r"(\w+)\[([^\]]+)\]", q):
+            assert table in tables, f"{fs['id']}: unknown table '{table}'"
+            assert column in tables[table]["columns"], \
+                f"{fs['id']}: unknown column '{table}[{column}]'"
+        # [Name] with no table prefix is a measure reference.
+        for measure in re.findall(r"(?<![\w\]])\[([^\]]+)\]", q):
+            if measure in local:
+                continue
+            assert measure in known_measures, \
+                f"{fs['id']}: unknown measure '[{measure}]'"
+
+
+def test_every_fewshot_has_a_unique_id_and_a_query():
+    seen = set()
+    for fs in _agent_module().SM_FEWSHOTS:
+        assert fs["query"].strip().upper().startswith("EVALUATE"), \
+            f"{fs['id']}: a semantic-model few-shot must be a DAX EVALUATE"
+        assert fs["id"] not in seen, f"duplicate few-shot id {fs['id']}"
+        seen.add(fs["id"])
+
+
+def test_the_agent_is_not_told_return_reasons_are_untracked():
+    """returns[reason] exists. A blanket 'returns are order-level' note made the
+    agent decline 'what are the main return reasons' - a question it can answer."""
+    dda = _agent_module()
+    text = dda.ai_instructions(False, "Black Friday Blast", 60)
+    assert "changed_mind" in text, \
+        "the agent must be told the return reasons it can actually group on"
+    per_product = text[text.index("What returns do NOT carry"):]
+    assert "per product or per" in per_product, \
+        "the returns limitation must be scoped to the product grain, not the reason"
+
+
+def test_the_agent_is_forbidden_from_answering_without_a_query():
+    text = _agent_module().ai_instructions(False, "Black Friday Blast", 60)
+    lowered = text.lower()
+    assert "never answer without running a query" in lowered
+    assert "templates" in lowered, \
+        "the agent must be told few-shots carry no results, only queries"
+    assert "invent" in lowered, "the agent must be told never to invent identities"
+
+
+def test_the_demo_questions_each_have_a_matching_fewshot():
+    """The portal's canned buttons are a demo surface with no other guard.
+
+    A question with no close template is the one the agent improvises on.
+    """
+    dda = _agent_module()
+    questions = " | ".join(fs["question"].lower() for fs in dda.SM_FEWSHOTS)
+    for topic in ("motifs de retour", "pourquoi la campagne", "segment concentre",
+                  "taux d'ouverture", "panier moyen", "roi des campagnes"):
+        assert topic in questions, f"no few-shot covers the demo question '{topic}'"

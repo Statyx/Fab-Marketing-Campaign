@@ -49,7 +49,8 @@ import uuid
 
 import requests
 from helpers import (load_config, load_state, save_state, get_fabric_token,
-                     fabric_headers, poll_operation, b64encode_json, print_step)
+                     fabric_headers, poll_operation, b64encode_json, print_step,
+                     ensure_tenant)
 
 SCH = "https://developer.microsoft.com/json-schemas/fabric/item/dataAgent/definition"
 
@@ -133,6 +134,17 @@ ONT_FEWSHOTS = [
      "MATCH (o:Order)-[:OrderPlacedByCustomer]->(cu:Customer) "
      "WHERE cu.lifecycle_stage = 'at_risk' "
      "RETURN SUM(o.total_amount_eur) AS revenue_at_risk_eur"),
+
+    # The demo's impact question. Without these two the agent has been observed answering
+    # "over 1 500 customers" with a fabricated name list, against a true 317.
+    ("Which at-risk customers were reached by the Black Friday Blast?",
+     "MATCH (c:Campaign {campaign_name:'Black Friday Blast'})-[:CampaignSentToCustomer]->"
+     "(cu:Customer) WHERE cu.lifecycle_stage = 'at_risk' "
+     "RETURN DISTINCT cu.customer_id, cu.first_name, cu.last_name, cu.city"),
+    ("How many at-risk customers did the Black Friday Blast reach?",
+     "MATCH (c:Campaign {campaign_name:'Black Friday Blast'})-[:CampaignSentToCustomer]->"
+     "(cu:Customer) WHERE cu.lifecycle_stage = 'at_risk' "
+     "RETURN COUNT(DISTINCT cu.customer_id) AS at_risk_reached"),
 ]
 
 
@@ -177,6 +189,13 @@ def build_sm_elements():
             _col("segment_name", "Segment name"), _col("is_premium", "Premium flag"),
             _meas("Total Segments", "Number of segments"),
         ]),
+        _table("crm_interactions", "Support and service interactions", [
+            _col("sentiment", "positive / neutral / negative"),
+            _col("is_resolved", "Whether the interaction was closed"),
+            _meas("Total Interactions", "All logged interactions"),
+            _meas("Negative Interactions", "Interactions with negative sentiment"),
+            _meas("Unresolved Negative", "Negative and still open - the friction signal"),
+        ]),
         _table("marketing_campaigns", "Email campaigns", [
             _col("campaign_name", "Campaign name"), _col("objective", "Campaign objective"),
             _meas("Total Campaigns", "Number of campaigns"),
@@ -208,6 +227,12 @@ def build_sm_elements():
             _col("category", "Category"),
             _meas("Total Products", "Catalogue size"), _meas("Units Sold", "Units sold"),
         ]),
+        _table("returns", "Order returns - one row per returned ORDER, never per product line", [
+            _col("reason", "changed_mind / damaged / wrong_size / not_as_described"),
+            _meas("Total Returns", "Number of returns"),
+            _meas("Refund Amount", "Total refunded"),
+            _meas("Return Rate", "Returns / orders"),
+        ]),
     ]
 
 
@@ -231,7 +256,7 @@ SM_FEWSHOTS = [
     {"id": "sm-009", "question": "Quel est le chiffre d'affaires et le panier moyen ?",
      "query": 'EVALUATE ROW("Revenue", [Revenue], "Orders", [Total Orders], "AOV", [Average Order Value])'},
     {"id": "sm-010", "question": "Quel est le ROI des campagnes ?",
-     "query": 'EVALUATE ROW("Attributed Revenue", [Attributed Revenue], "Budget", [Total Budget], "ROI", [Campaign ROI])'},
+     "query": 'EVALUATE SUMMARIZECOLUMNS(marketing_campaigns[campaign_name], "ROI", [Campaign ROI], "Attributed Revenue", [Attributed Revenue], "Budget", [Total Budget]) ORDER BY [ROI] DESC'},
     {"id": "sm-011", "question": "Chiffre d'affaires par canal",
      "query": 'EVALUATE SUMMARIZECOLUMNS(orders[channel], "Revenue", [Revenue], "Orders", [Total Orders]) ORDER BY [Revenue] DESC'},
     {"id": "sm-012", "question": "Combien de clients se sont desabonnes ?",
@@ -242,6 +267,31 @@ SM_FEWSHOTS = [
      "query": 'EVALUATE ROW("Avg Engagement", [Avg Engagement Rate], "Avg NPS", [Avg NPS])'},
     {"id": "sm-015", "question": "Donne-moi un resume de la sante client",
      "query": 'EVALUATE ROW("Customers", [Total Customers], "At Risk", [Customers at Risk], "Revenue at Risk", [Revenue at Risk], "Churned", [Churned Customers], "Avg Churn", [Avg Churn Score])'},
+
+    # --- One few-shot per canned question of the demo portal.
+    # Without a close match the agent has been observed answering a "why" question from
+    # nothing at all - no query executed, figures and customer names invented. A template
+    # it can recognise and run is the cheapest way to keep it grounded.
+    {"id": "sm-016",
+     "question": "Pourquoi la campagne Black Friday Blast genere-t-elle autant de desabonnements ?",
+     "query": 'EVALUATE SUMMARIZECOLUMNS(marketing_campaigns[campaign_name], "Sends per Customer", [Sends per Customer], "Unsubscribes", [Unsubscribes], "Unsub Rate", [Unsubscribe Rate], "Open Rate", [Open Rate]) ORDER BY [Sends per Customer] DESC'},
+    {"id": "sm-017", "question": "Quels sont les principaux motifs de retour ?",
+     "query": 'EVALUATE SUMMARIZECOLUMNS(returns[reason], "Retours", [Total Returns], "Rembourse", [Refund Amount]) ORDER BY [Retours] DESC'},
+    {"id": "sm-018",
+     "question": "Quel segment concentre le plus d'envois et quel est son score de churn ?",
+     "query": 'EVALUATE SUMMARIZECOLUMNS(crm_segments[segment_name], "Envois", [Total Sends], "Score de churn", [Avg Churn Score], "Clients a risque", [Customers at Risk]) ORDER BY [Envois] DESC'},
+    {"id": "sm-019",
+     "question": "Combien de clients touches par Black Friday Blast sont aujourd'hui a risque ?",
+     "query": 'EVALUATE CALCULATETABLE(SUMMARIZECOLUMNS(crm_customer_profile[risk_band], "Clients", DISTINCTCOUNT(marketing_sends[customer_id])), marketing_campaigns[campaign_name] = "Black Friday Blast")'},
+    {"id": "sm-020", "question": "Compare les taux d'ouverture entre campagnes",
+     "query": 'EVALUATE SUMMARIZECOLUMNS(marketing_campaigns[campaign_name], "Open Rate", [Open Rate], "Sends", [Total Sends]) ORDER BY [Open Rate] ASC'},
+    {"id": "sm-021", "question": "Quel est le panier moyen par canal de vente ?",
+     "query": 'EVALUATE SUMMARIZECOLUMNS(orders[channel], "AOV", [Average Order Value], "Revenue", [Revenue], "Orders", [Total Orders]) ORDER BY [AOV] DESC'},
+    {"id": "sm-022",
+     "question": "Les interactions support negatives augmentent-elles le risque d'attrition ?",
+     "query": 'EVALUATE SUMMARIZECOLUMNS(crm_customer_profile[risk_band], "Interactions negatives", [Negative Interactions], "Non resolues", [Unresolved Negative], "Clients", [Profiled Customers]) ORDER BY [Interactions negatives] DESC'},
+    {"id": "sm-023", "question": "Quelle part du chiffre d'affaires est attribuee aux campagnes ?",
+     "query": 'EVALUATE ROW("Attributed Revenue", [Attributed Revenue], "Revenue", [Revenue], "Attribution Rate", [Attribution Rate])'},
 ]
 
 
@@ -307,9 +357,22 @@ def ai_instructions(ontology_only: bool, culprit_name: str, at_risk: int) -> str
         f"- Known incident: the '{culprit_name}' campaign over-mailed its target segment, which\n"
         f"  triggered an unsubscribe spike, halved engagement and stopped orders. Marketing\n"
         f"  pressure ([Sends per Customer]) is the metric that exposes it.\n"
-        "- Returns are recorded per ORDER, never per product line. There is therefore NO return\n"
-        "  rate, refund total or return count per product or per category. If asked, say the data\n"
-        "  is not tracked at that grain - do NOT report the overall rate as if it were per product.\n\n"
+        "- Returns DO carry a reason: changed_mind, damaged, wrong_size, not_as_described.\n"
+        "  'What are the main return reasons' IS answerable - group returns[reason] and use\n"
+        "  [Total Returns] / [Refund Amount]. Never claim the reason is not tracked.\n"
+        "- What returns do NOT carry is a product: a return is recorded per ORDER, never per order\n"
+        "  line. There is therefore no return rate, refund total or return count per product or per\n"
+        "  category. For that grain only, say the data is not tracked - and do not silently report\n"
+        "  the overall rate as if it were per product.\n\n"
+        "## Never answer without running a query\n"
+        "Every figure, name, e-mail and identifier you output MUST come from a query you executed\n"
+        "in THIS conversation. You hold no memory of this data: the few-shot examples are query\n"
+        "TEMPLATES, they contain no results and no values. If you have not executed a query, you do\n"
+        "not know the answer - run one first.\n"
+        "This applies to WHY questions above all. Do not reason your way to a cause: pull the\n"
+        "comparative figures (per campaign, per segment, per risk band), then explain what they\n"
+        "show. A cause stated without a query is a guess.\n"
+        "NEVER invent customer names, e-mails or identifiers. If a query returned nothing, say so.\n\n"
         "## Response format\n"
         "- Lead with a direct one-line answer, figures as digits.\n"
         "- Then a short bullet list of the values or entities found.\n"
@@ -400,6 +463,7 @@ def main():
     args = ap.parse_args()
 
     cfg = load_config(); st = load_state()
+    ensure_tenant(cfg)
     api = cfg["fabric_api_base"]; ws = st["workspace_id"]
     name = cfg["data_agent_name"]
     ont_id = st["ontology_id"]; ont_name = cfg["ontology_name"]

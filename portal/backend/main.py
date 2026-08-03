@@ -477,6 +477,25 @@ def _generate_followups(agent_key: str, question: str, answer: str) -> list[str]
 
 
 # ── Data Agent chat (OpenAI Assistants API) ──────────────────
+def _raise_if_throttled(resp):
+    """Fabric throttles the agent per capacity and answers 429 RequestBlocked.
+
+    Left as a bare 502 this reads as "the portal is broken" in the middle of a
+    demo. It is not: it is a cool-down, it states when it lifts, and the only
+    cure is to wait. Surface that instead of a gateway error.
+    """
+    if resp.status_code != 429:
+        return
+    detail = "L'agent est temporairement limité par Fabric (trop de questions rapprochées)."
+    try:
+        msg = resp.json().get("message", "")
+        if "until:" in msg:
+            detail += f" Réessayez après {msg.split('until:')[1].strip()}."
+    except Exception:
+        pass
+    raise HTTPException(429, detail)
+
+
 @app.post("/api/agents/{agent_key}/chat", response_model=ChatResponse)
 async def agent_chat(agent_key: str, req: ChatRequest):
     """Ask a persona's Data Agent a question and return the answer + tool trace."""
@@ -493,11 +512,13 @@ async def agent_chat(agent_key: str, req: ChatRequest):
 
         asst_resp = await client.post(f"{base}/assistants", headers=headers, params=params,
                                       json={"model": "irrelevant"})
+        _raise_if_throttled(asst_resp)
         if asst_resp.status_code not in (200, 201):
             raise HTTPException(502, f"Assistant creation failed: {asst_resp.status_code} {asst_resp.text[:200]}")
         assistant_id = asst_resp.json()["id"]
 
         thread_resp = await client.post(f"{base}/threads", headers=headers, params=params, json={})
+        _raise_if_throttled(thread_resp)
         if thread_resp.status_code not in (200, 201):
             raise HTTPException(502, f"Thread creation failed: {thread_resp.status_code} {thread_resp.text[:200]}")
         thread_id = thread_resp.json()["id"]

@@ -47,7 +47,8 @@ import requests
 
 sys.path.insert(0, str(Path(__file__).parent))
 from helpers import (load_config, load_state, save_state, get_fabric_token, fabric_headers,
-                     get_powerbi_token, b64encode_json, poll_operation, find_item, print_step)
+                     get_powerbi_token, b64encode_json, poll_operation, find_item, print_step,
+                     ensure_tenant)
 
 API_BASE = None
 
@@ -798,6 +799,7 @@ def reframe_direct_lake(ws_id, sm_id):
 
 def main():
     config = load_config(); state = load_state()
+    ensure_tenant(config)
     global API_BASE
     API_BASE = config["fabric_api_base"]
     ws_id = state.get("workspace_id")

@@ -22,7 +22,8 @@ _restore_path()
 if hasattr(sys.stdout, "reconfigure"): sys.stdout.reconfigure(encoding="utf-8")
 
 import requests
-from helpers import get_fabric_token, fabric_headers, load_config, load_state
+from helpers import (get_fabric_token, fabric_headers, load_config, load_state,
+                     ensure_tenant)
 from deploy_ontology import ENTITIES, RELATIONSHIPS
 
 GT = {"string": "STRING", "int64": "INT", "double": "FLOAT", "datetime": "ZONED DATETIME", "bool": "BOOLEAN"}
@@ -106,6 +107,7 @@ def build_definition(lh, locations):
 
 def main():
     cfg = load_config(); state = load_state()
+    ensure_tenant(cfg)
     api = cfg["fabric_api_base"]; ws = state["workspace_id"]; lh = state["lakehouse_id"]
     substr = cfg["ontology_name"] + "_graph"
     token = get_fabric_token(); headers = fabric_headers(token)
