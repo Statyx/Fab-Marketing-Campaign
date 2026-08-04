@@ -2152,3 +2152,40 @@ def test_a_fixed_height_portal_box_still_fits_its_text():
         f"only {checked} fixed-height text boxes examined; the regex has stopped matching "
         f"the stylesheet and this guard is passing on nothing")
 
+
+def test_the_header_band_fits_the_title_and_the_subtitle_it_stacks():
+    """The guard above cannot see this box, and the box is the one on stage first.
+
+    `.header` declares `height` but no `font-size`, so a rule-by-rule check walks straight
+    past it - while the text it contains lives in two OTHER rules (`.header-brand h1` and
+    `.header-sub`) that declare no height. Every ingredient is present and no rule holds
+    two of them, which is exactly how the Power BI cardVisual shipped clipped: the box was
+    sized for fewer texts than it draws.
+
+    So model the stack, as validate_layout() does for a card: each text keeps its own line
+    box AND its own chrome, summed - not one padding shared between them. 4 Aug 2026 the
+    band was enlarged for the demo ("qu'on voie bien qu'on est dans une application"), and
+    without this the title could be grown past 84px with nothing failing until it was on a
+    projector in front of a customer.
+    """
+    html = _PORTAL_HTML.read_text(encoding="utf-8")
+    style = html[html.index("<style>"):html.index("</style>")]
+    scale = _portal_scale()
+
+    def _px(selector: str) -> float:
+        block = re.search(re.escape(selector) + r"\s*\{([^}]*)\}", style)
+        assert block, f"{selector} disappeared - this guard must be re-aimed, not deleted"
+        size = re.search(r"font-size:\s*([\d.]+)rem", block.group(1))
+        assert size, f"{selector} must size its text in rem so the one knob still governs it"
+        return float(size.group(1)) * 16 * scale
+
+    band = re.search(r"\.header\s*\{([^}]*)\}", style)
+    assert band, ".header disappeared - this guard must be re-aimed, not deleted"
+    height = re.search(r"(?<![a-z-])height:\s*(\d+)px", band.group(1))
+    assert height, ".header must keep a fixed height, or this guard silently passes on nothing"
+
+    need = sum(pt * 1.35 + 8 for pt in (_px(".header-brand h1"), _px(".header-sub")))
+    assert int(height.group(1)) >= need, (
+        f"the header band is {height.group(1)}px but its title + subtitle need {need:.1f}px; "
+        f"the browser will clip them and never warn")
+
