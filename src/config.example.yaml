@@ -24,6 +24,87 @@ semantic_model_name: "SM_Marketing_Analytics"
 report_name: "RPT_Marketing_Churn"
 data_agent_name: "Marketing_Churn_Agent"
 
+# ── Foundry plane (optional — not part of deploy_all.py) ─────────
+# A Foundry agent grounded on Fabric. TWO BINDINGS, TWO CONTRACTS — they are not
+# interchangeable, and attaching both to one agent gives you two Fabric answers that can
+# disagree with nothing in the response saying which one you are reading.
+#
+#   binding: fabric-iq           (default) FabricIQPreviewTool — an MCP surface over Fabric IQ.
+#                                Foundry reasons over what comes back. THE SEMANTICS ARE YOURS:
+#                                nothing from the Fabric data agent travels with it — not the
+#                                churn threshold, not "churn applies to buyers only", not the
+#                                DAX measures. The agent prompt carries the guard rails instead.
+#   binding: fabric-data-agent   MicrosoftFabricPreviewTool — delegates the question to the
+#                                PUBLISHED Fabric data agent, which answers with its own
+#                                reasoning. You inherit the curated semantics; you give up
+#                                seeing how the answer was produced.
+#
+# The connection is created ONCE (portal or ARM) and resolved here BY NAME, never by GUID, so
+# the same script promotes across environments unchanged. Only the connection the active
+# binding uses has to be filled in.
+#
+# require_approval applies to the Fabric IQ tool only. The SDK default is "always": every
+# call pauses for a human, which is right for a first manual run and hangs an unattended
+# supervision replay. Set it explicitly so the posture is a decision, not a default.
+#
+# Agent names may NOT contain underscores — the service rejects them without naming the
+# field, which reads as a broken connection. check_agent_name() catches it in preflight.
+#
+#   project_endpoint -> Foundry portal > your project > Overview > project endpoint
+#   model_deployment -> Foundry portal > Models + endpoints (the deployment NAME, not the model id)
+foundry:
+  project_endpoint: "https://<resource>.services.ai.azure.com/api/projects/<project>"
+  model_deployment: "gpt-4o"
+  binding: "fabric-iq"                                # fabric-iq | fabric-data-agent
+  fabric_iq_connection_name: "<your-fabric-iq-connection>"  # used when binding = fabric-iq
+  fabric_connection_name: "<your-data-agent-connection>"    # used when binding = fabric-data-agent
+  # fabric-iq only. The connection carries the IDENTITY; the target below decides WHICH
+  # Fabric item is queried -- the server_url is built from state.json, never typed.
+  #   ontology       -> relationships / RCA        (item id from state.json)
+  #   data_agent     -> the published data agent   (item id from state.json)
+  #   semantic_model -> a fixed hub route, NO item id: you cannot say which model answers
+  fabric_iq_target: "data_agent"                      # ontology | semantic_model | data_agent
+  # WHERE the endpoint comes from. "connection" = the portal OneLake Catalog picker
+  # already bound one Fabric item into the connection, so server_url is NOT sent.
+  # "explicit" = the connection was made against a bare MCP target, so the item has to
+  # be named in the tool.
+  fabric_iq_endpoint: "connection"                    # connection | explicit
+  fabric_iq_server_label: "fabriciq-dataagent"        # shown in approval prompts
+  require_approval: "never"                           # fabric-iq only: never | always
+  agent_name: "Marketing-Churn-Front-Door"            # the DATA subordinate
+
+  # ── Voice-of-Customer subordinate (src/deploy_voc_agent.py) ────
+  # A file_search agent over the generated verbatim corpus. It carries the MOTIVE;
+  # it must never carry a NUMBER — a retrieval of N documents is not a business total.
+  voc:
+    agent_name: "Voice-Of-Customer"
+    # Must match the store that actually exists in the project: deploy_voc_agent.py resolves it
+    # BY NAME and CREATES one when the lookup misses, so a wrong value here does not fail — it
+    # silently builds a second, empty store and binds the agent to it. Keep this equal to
+    # deploy_voc_agent.DEFAULT_VECTOR_STORE unless you renamed the store yourself.
+    vector_store_name: "voc-marketing-churn"
+
+  # ── Supervisor (src/deploy_supervisor_agent.py) ────────────────
+  # Routes to the two subordinates and relays their answers VERBATIM. It never recomputes.
+  #
+  # Both subordinates are reached over A2A, and that is ARCHITECTURAL, not a preference:
+  # a2a_preview and file_search DO NOT COEXIST on one agent. Measured three times, same
+  # instructions, same question, only the tool list changing — with file_search present the
+  # A2A tool never fires (11-16 file_search calls instead), and tool_choice="required" does
+  # not fix it. file_search describes itself to the model; an A2A tool surfaces only under
+  # its CONNECTION NAME. So the two connections below must have DISTINCT, telling names:
+  # they are the only thing the model uses to tell the two tools apart.
+  #
+  # Each connection is created by the script (ARM, idempotent) and points at
+  # {project_endpoint}/agents/{name}/endpoint/protocols/a2a. Each TARGET agent must have
+  # incoming A2A enabled AND an agent card — a target with protocols=[a2a] and no card
+  # fails at invoke with "Failed to fetch agent card: 400", which reads as a permission
+  # problem and is not one. The script writes the card and never overwrites an existing one.
+  supervisor:
+    agent_name: "Marketing-Supervisor"
+    a2a_connection_name: "FrontDoorA2A"         # -> foundry.agent_name (the data subordinate)
+    voc_connection_name: "VoiceOfCustomerA2A"   # -> foundry.voc.agent_name (the verbatims)
+
 # ── THE STORYLINE ────────────────────────────────────────────────
 # A single over-mailed campaign creates email fatigue in the most valuable segment,
 # which unsubscribes, stops buying, and churns. Detect -> diagnose -> quantify impact.

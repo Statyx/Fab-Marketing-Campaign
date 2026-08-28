@@ -24,6 +24,7 @@ from pydantic import BaseModel
 # the code itself is fine. Pinning the directory makes the import launch-independent.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import trace_source  # noqa: E402
+from workflow import build_workflow  # noqa: E402
 
 # ── Config ───────────────────────────────────────────────────
 # src/state.json is the source of truth, so the portal can never point at a stale or
@@ -61,6 +62,22 @@ def _config_int(key: str, default: int) -> int:
     except Exception:
         pass
     return default
+
+
+def _config_dict() -> dict:
+    """Whole config.yaml, for the nested blocks a regex cannot reach (foundry.supervisor.*).
+
+    yaml is imported here and not at the top, behind a swallowed exception, for the same
+    reason trace_source is path-pinned above: the portal must not fail to start over a
+    dependency that only one panel needs. Without it the workflow view falls back to
+    state.json alone -- which is the receipt anyway, so the picture stays truthful and
+    only loses the names of things nobody deployed.
+    """
+    try:
+        import yaml
+        return yaml.safe_load((_SRC / "config.yaml").read_text(encoding="utf-8")) or {}
+    except Exception:
+        return {}
 
 
 _ST = _state()
@@ -450,6 +467,22 @@ async def list_agents():
                     "welcome": cfg.get("welcome", "")}
     out["_meta"]["graph"] = ONT_GRAPH
     return out
+
+
+@app.get("/api/workflow")
+async def workflow_view():
+    """The deployed agent chain, re-derived on every call.
+
+    Deliberately NOT computed once at import like ONT_GRAPH: the ontology only changes when
+    someone edits the deployer, but state.json is rewritten by every Foundry deploy. A
+    module-level snapshot would show yesterday's chain until the portal is restarted -- and
+    the one moment this panel is opened is right after a deploy, to check it landed.
+
+    Deployment is all this reports. Reachability is a different claim and belongs to
+    verify_supervisor.py, which asks the live service; a green box here means "the deploy
+    wrote it down", never "it answers".
+    """
+    return build_workflow(_state(), _config_dict())
 
 
 # ── Follow-up suggestions ────────────────────────────────────

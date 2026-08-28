@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Signing in…</title>
+  </head>
+  <body>
+    <!--
+      MSAL redirect landing page for the sign-in popup and the silent-renewal iframe.
+
+      It must NOT boot the React app: mounting the router here navigates away and discards the
+      auth response before MSAL can read it. But it must not be inert either — MSAL v5 expects
+      this page to publish the response itself (see src/redirect.ts).
+    -->
+    <script type="module" src="/src/redirect.ts"></script>
+  </body>
+</html>

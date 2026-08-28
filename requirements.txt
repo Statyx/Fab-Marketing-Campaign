@@ -8,3 +8,9 @@ numpy
 pyyaml
 requests
 pytest
+
+# Foundry plane (src/deploy_foundry_agent.py, src/foundry_supervision.py).
+# The 2.x line is a different generation from 1.x: PromptAgentDefinition, the Fabric tool
+# and get_openai_client(agent_name=...) do not exist before it.
+azure-ai-projects>=2.4.0
+openai

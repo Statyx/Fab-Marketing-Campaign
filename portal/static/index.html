@@ -378,6 +378,35 @@ body {
 }
 .graph-open:hover { background: rgba(138,43,226,0.18); }
 
+/* ═══════════════ WORKFLOW (the deployed agent chain) ═══════════════
+   The colour code is the architecture argument made visible, and it EXTENDS the one the
+   room has already learnt in the source legend: purple stays the ontology, blue stays the
+   semantic model. Orange is new and means Foundry -- orchestration, never a source of
+   figures. A node the deploy never wrote is grey and dashed, never hidden. */
+.wf-badge {
+  display: inline-flex; align-items: center; gap: 6px; background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08); color: rgba(255,255,255,0.7);
+  padding: 5px 10px; border-radius: 999px; font-size: 0.6875rem; cursor: pointer;
+  margin-left: 6px; font-family: inherit;
+}
+.wf-badge:hover { background: rgba(255,255,255,0.08); color: #fff; }
+/* The diagram is 5 columns wide and only 2 rows tall: the binding constraint is horizontal,
+   so the card is as wide as the screen allows. Below ~1560px the SVG scales down with it and
+   the text shrinks with it -- that is why the fonts inside are sized generously. */
+.modal-card.wide { width: min(1560px, 97vw); }
+.wf-warn {
+  margin-top: 14px; padding: 10px 12px; border-radius: 8px;
+  background: rgba(217,119,6,0.10); border: 1px solid rgba(217,119,6,0.30);
+  color: #92400E; font-size: 0.75rem; line-height: 1.7;
+}
+.wf-warn b { font-weight: 700; }
+.wf-key { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 12px; font-size: 0.7rem;
+          color: var(--text-secondary); }
+.wf-key span::before {
+  content: ''; display: inline-block; width: 9px; height: 9px; border-radius: 3px;
+  margin-right: 5px; vertical-align: middle; background: currentColor;
+}
+
 /* ═══════════════ QUERY INSPECTOR ═══════════════ */
 .query-toggle {
   background: var(--bg-secondary); border: 1px solid var(--border); color: var(--text-secondary);
@@ -738,6 +767,7 @@ body {
       <button data-view="split" onclick="setView('split')" class="active">&#9638; Split</button>
     </nav>
     <div class="header-explore" id="headerExplore" style="display:none;"></div>
+    <button class="wf-badge" id="btnWorkflow" onclick="openWorkflowModal()" title="Voir la cha&icirc;ne d&rsquo;agents telle qu&rsquo;elle est d&eacute;ploy&eacute;e">&#9881; Workflow</button>
     <button class="health-badge" id="healthBadge" onclick="manualTokenRefresh()" title="API health — click to force-refresh tokens">
       <span class="health-dot ok" id="healthDot"></span>
       <span id="healthText">checking…</span>
@@ -831,6 +861,30 @@ body {
     <div class="modal-actions">
       <button class="modal-btn secondary" onclick="closeGraphModal()">Fermer</button>
       <button class="modal-btn" onclick="openGraphInFabric()">Ouvrir dans Fabric</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ WORKFLOW MODAL (the deployed agent chain) ═══════════════ -->
+<div class="modal-overlay" id="workflowModal" onclick="if(event.target===this)closeWorkflowModal()">
+  <div class="modal-card wide">
+    <div class="modal-header">
+      <div>
+        <h3>&#9881; La cha&icirc;ne d&rsquo;agents &mdash; telle qu&rsquo;elle est d&eacute;ploy&eacute;e</h3>
+        <div class="modal-sub" id="workflowModalSub"></div>
+      </div>
+      <button class="modal-close" onclick="closeWorkflowModal()" title="Fermer">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p class="hint"><b>Foundry orchestre, Fabric r&eacute;pond.</b> Le superviseur ne calcule rien&nbsp;: il choisit un subordonn&eacute; et relaie sa r&eacute;ponse mot pour mot. Les chiffres viennent du mod&egrave;le s&eacute;mantique en DAX, les liens de l&rsquo;ontologie en GQL, le motif des verbatims clients. Ce sch&eacute;ma est reconstruit &agrave; chaque ouverture depuis <code>state.json</code>&nbsp;: il montre ce que les d&eacute;ploiements ont r&eacute;ellement &eacute;crit, pas ce que la configuration esp&eacute;rait.</p>
+      <div id="workflowSvg"></div>
+      <div class="wf-key" id="workflowKey"></div>
+      <div id="workflowWarn"></div>
+      <div id="workflowLists"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="modal-btn secondary" onclick="closeWorkflowModal()">Fermer</button>
+      <button class="modal-btn" onclick="openWorkflowInFoundry()">Ouvrir Foundry</button>
     </div>
   </div>
 </div>
@@ -1526,6 +1580,151 @@ function openGraphInFabric(){
   var m=fabricMeta(),g=graphData();
   if(!m.workspaceId||!g.id)return;
   window.open('https://app.fabric.microsoft.com/groups/'+m.workspaceId+'/ontologies/'+g.id,'_blank');
+}
+
+/* ═══════════════ WORKFLOW (the deployed agent chain) ═══════════════
+   Same contract as the ontology panel above and for the same reason: the drawing is
+   derived, never typed. /api/workflow re-reads state.json on every call, so opening this
+   right after a deploy shows the deploy -- and a node nobody deployed renders grey and
+   dashed instead of vanishing, because an absent box is a lie by omission.
+
+   Layered layout, columns from node.layer (computed backend-side from the edges). Nothing
+   here decides the topology; it only decides the pixels. */
+var _wf=null;
+
+function wfColor(n){
+  if(!n.deployed)return {fill:'rgba(120,120,120,0.10)',stroke:'rgba(120,120,120,0.45)',text:'#6B7280'};
+  if(n.plane==='foundry') return {fill:'rgba(217,119,6,0.12)', stroke:'rgba(217,119,6,0.50)', text:'#92400E'};
+  if(n.kind==='ontology')      return {fill:'rgba(138,43,226,0.10)',stroke:'rgba(138,43,226,0.45)',text:'#4C1D95'};
+  if(n.kind==='semantic_model')return {fill:'rgba(27,94,158,0.10)', stroke:'rgba(27,94,158,0.45)', text:'#1B5E9E'};
+  return {fill:'rgba(2,113,128,0.10)',stroke:'rgba(2,113,128,0.45)',text:'#02555F'};
+}
+
+function buildWorkflowSvg(wf){
+  var nodes=wf.nodes||[],edges=wf.edges||[];
+  if(!nodes.length)return '<p class="hint">Cha&icirc;ne indisponible.</p>';
+  var maxL=0,cnt={};
+  nodes.forEach(function(n){if(n.layer>maxL)maxL=n.layer;cnt[n.layer]=(cnt[n.layer]||0)+1;});
+  var perCol=1;Object.keys(cnt).forEach(function(k){if(cnt[k]>perCol)perCol=cnt[k];});
+  /* Geometry is computed, never eyeballed -- workflow.py caps the strings for a 214px box
+     and these numbers are the other half of that contract:
+       box 214 wide in a 304 column -> 90px of clear space for the protocol + connection name
+       row pitch 132 for a 62-high box -> 70px between two boxes in the same column
+     Change NW, colW or the fonts and MAX_LABEL / MAX_DETAIL / MAX_EDGE_LABEL must move too.
+
+     The row comes from the backend, never from insertion order: ordering by insertion put
+     `corpus` above `data_agent` and made two arrows cross in the middle of the picture. In a
+     diagram whose whole job is "who talks to whom", a crossing reads as a wiring mistake. */
+  var NW=214,NH=62,colW=304,W=colW*(maxL+1),H=Math.max(300,132*perCol+96),pos={};
+  nodes.forEach(function(n){
+    pos[n.id]={x:colW*(n.layer+0.5),y:H*((n.row||0)+1)/(cnt[n.layer]+1)};
+  });
+  var byId={};nodes.forEach(function(n){byId[n.id]=n;});
+  var lines=edges.map(function(e){
+    var a=pos[e.from],b=pos[e.to];if(!a||!b)return '';
+    var x1=a.x+NW/2,x2=b.x-NW/2,mx=(x1+x2)/2,my=(a.y+b.y)/2;
+    var dashed=!(byId[e.from]&&byId[e.from].deployed&&byId[e.to]&&byId[e.to].deployed);
+    var d='M'+x1+','+a.y+' C'+(x1+28)+','+a.y+' '+(x2-28)+','+b.y+' '+x2+','+b.y;
+    return '<path d="'+d+'" fill="none" stroke="rgba(2,113,128,0.45)" stroke-width="1.8" '+
+           (dashed?'stroke-dasharray="5 3" ':'')+'marker-end="url(#wfArrow)"/>'+
+           '<text x="'+mx+'" y="'+(my-15)+'" text-anchor="middle" font-size="10.5" font-weight="700" '+
+           'fill="#02555F">'+escHtml(e.protocol||'')+'</text>'+
+           (e.short?('<text x="'+mx+'" y="'+(my-4)+'" text-anchor="middle" font-size="8.5" '+
+                     'fill="#6B7280">'+escHtml(e.short)+'</text>'):'');
+  }).join('');
+  var boxes=nodes.map(function(n){
+    var p=pos[n.id],c=wfColor(n);
+    var sub=n.deployed?(n.detail||''):'non d\u00e9ploy\u00e9';
+    return '<g><title>'+escHtml(n.label+' — '+(n.contract||''))+'</title>'+
+      '<rect x="'+(p.x-NW/2)+'" y="'+(p.y-NH/2)+'" width="'+NW+'" height="'+NH+'" rx="12" '+
+      'fill="'+c.fill+'" stroke="'+c.stroke+'" stroke-width="1.5"'+
+      (n.deployed?'':' stroke-dasharray="5 3"')+'/>'+
+      '<text x="'+p.x+'" y="'+(p.y-3)+'" text-anchor="middle" font-size="13" font-weight="700" '+
+      'fill="'+c.text+'">'+escHtml(n.label)+'</text>'+
+      (sub?('<text x="'+p.x+'" y="'+(p.y+14)+'" text-anchor="middle" font-size="9.5" '+
+            'fill="'+c.text+'" opacity="0.85">'+escHtml(sub)+'</text>'):'')+'</g>';
+  }).join('');
+  return '<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:auto;">'+
+    '<defs><marker id="wfArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" '+
+    'markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="rgba(2,113,128,0.6)"/>'+
+    '</marker></defs>'+lines+boxes+'</svg>';
+}
+
+function buildWorkflowKey(){
+  return '<span style="color:#92400E">Foundry &mdash; orchestration</span>'+
+         '<span style="color:#02555F">Fabric &mdash; agent de donn&eacute;es, lakehouse</span>'+
+         '<span style="color:#1B5E9E">Mod&egrave;le s&eacute;mantique (DAX)</span>'+
+         '<span style="color:#6B21A8">Ontologie (GQL)</span>'+
+         '<span style="color:#6B7280">non d&eacute;ploy&eacute;</span>';
+}
+
+function buildWorkflowWarn(wf){
+  var w=wf.warnings||[];
+  if(!w.length)return '';
+  return '<div class="wf-warn"><b>&#9888; &Eacute;carts constat&eacute;s</b><br>'+
+         w.map(function(x){return escHtml(x);}).join('<br>')+'</div>';
+}
+
+function buildWorkflowLists(wf){
+  var hops=(wf.edges||[]).map(function(e){
+    var f=(wf.nodes||[]).filter(function(n){return n.id===e.from;})[0]||{},
+        t=(wf.nodes||[]).filter(function(n){return n.id===e.to;})[0]||{};
+    return '<li><b>'+escHtml(f.label||e.from)+'</b> &mdash;<em>'+escHtml(e.protocol)+'</em>&rarr; <b>'+
+           escHtml(t.label||e.to)+'</b>'+
+           (e.label?(' <span class="hint">via '+escHtml(e.label)+'</span>'):'')+
+           (e.note?(' <span class="hint">&middot; '+escHtml(e.note)+'</span>'):'')+'</li>';
+  }).join('');
+  var ags=(wf.nodes||[]).map(function(n){
+    return '<li><b>'+escHtml(n.label)+'</b> <span class="hint">&middot; '+
+           escHtml(n.deployed?(n.detail||'d\u00e9ploy\u00e9'):'non d\u00e9ploy\u00e9')+'</span>'+
+           (n.contract?('<br><span class="hint" style="opacity:0.85">'+escHtml(n.contract)+
+                        '</span>'):'')+'</li>';
+  }).join('');
+  return '<div style="display:flex;gap:24px;flex-wrap:wrap;margin-top:12px;">'+
+    '<div style="flex:1;min-width:260px;"><p class="hint"><b>Sauts</b></p><ul style="font-size: 0.75rem;line-height:1.8;padding-left:18px;">'+hops+'</ul></div>'+
+    '<div style="flex:1;min-width:260px;"><p class="hint"><b>Composants</b></p><ul style="font-size: 0.75rem;line-height:1.8;padding-left:18px;">'+ags+'</ul></div>'+
+    '</div>';
+}
+
+function renderWorkflow(wf){
+  var n=wf.nodes||[],live=n.filter(function(x){return x.deployed;}).length;
+  document.getElementById('workflowModalSub').textContent=
+    live+'/'+n.length+' composants déployés · '+(wf.edges||[]).length+' sauts · '+
+    (wf.projectEndpoint||'projet Foundry inconnu');
+  document.getElementById('workflowSvg').innerHTML=buildWorkflowSvg(wf);
+  document.getElementById('workflowKey').innerHTML=buildWorkflowKey();
+  document.getElementById('workflowWarn').innerHTML=buildWorkflowWarn(wf);
+  document.getElementById('workflowLists').innerHTML=buildWorkflowLists(wf);
+}
+
+function openWorkflowModal(){
+  document.getElementById('workflowModal').classList.add('open');
+  document.getElementById('workflowModalSub').textContent='lecture de state.json…';
+  document.getElementById('workflowSvg').innerHTML='<p class="hint">Chargement…</p>';
+  document.getElementById('workflowKey').innerHTML='';
+  document.getElementById('workflowWarn').innerHTML='';
+  document.getElementById('workflowLists').innerHTML='';
+  /* Fetched on open, never cached: the one moment this panel is used is right after a
+     deploy, to check it landed. A cached chain would show the previous one. */
+  fetch('/api/workflow').then(function(r){
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    return r.json();
+  }).then(function(wf){
+    _wf=wf;renderWorkflow(wf);
+  }).catch(function(err){
+    document.getElementById('workflowModalSub').textContent='indisponible';
+    document.getElementById('workflowSvg').innerHTML=
+      '<p class="hint">La cha&icirc;ne n&rsquo;a pas pu &ecirc;tre lue ('+escHtml(String(err))+
+      '). Le portail est-il &agrave; jour&nbsp;? Cet &eacute;cran ne devine rien.</p>';
+  });
+}
+function closeWorkflowModal(){document.getElementById('workflowModal').classList.remove('open');}
+function openWorkflowInFoundry(){
+  /* A deep link to the project would need the subscription and resource group, and
+     state.json holds neither -- a link built from a guess lands on the wrong project or a
+     404 in front of the room. So this opens the Foundry home and the exact project is
+     printed in the sub-header instead. */
+  window.open('https://ai.azure.com/','_blank');
 }
 
 function openMcpModal(key){  _mcpCurrent=key;

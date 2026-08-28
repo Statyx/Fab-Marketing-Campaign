@@ -26,10 +26,21 @@ Thumbs.db
 # Committing 12k CSV rows + 1.5k text files would bloat every diff for zero benefit.
 data/raw/
 
+# Supervision run logs -- contain live agent answers (real figures, real entity names).
+# Observations belong in the brain, redacted; raw answers do not belong in git.
+data/supervision/
+
 # Environment-specific — contain tenant / workspace / item IDs. Use the *.example files as templates.
 src/config.yaml
 src/state.json
 .vscode/mcp.json
+
+# Rayfin app (app-v2/) — written by `rayfin up`, all contain workspace / item / capacity GUIDs.
+# The leak guard is an allow-list on GUIDs, so any of these in a commit fails CI on a public repo.
+app-v2/rayfin/.env
+app-v2/rayfin/.deployments.json
+app-v2/dist/
+**/.env.local
 
 # Optional local deny-list for .github/scripts/check_client_leak.py (one literal per line).
 # It must never be committed: a public file listing client names is itself the leak.

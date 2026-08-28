@@ -1,0 +1,265 @@
+{
+  "workflow": {
+    "nodes": [
+      {
+        "id": "supervisor",
+        "label": "Marketing-Supervisor",
+        "plane": "foundry",
+        "kind": "agent",
+        "detail": "gpt-5.4",
+        "contract": "route et relaie mot pour mot, ne calcule jamais",
+        "deployed": false,
+        "ref": "",
+        "layer": 0,
+        "row": 0
+      },
+      {
+        "id": "front_door",
+        "label": "Marketing-Churn-Front-Door",
+        "plane": "foundry",
+        "kind": "agent",
+        "detail": "fabric-iq · data_agent",
+        "contract": "porte d'entrée vers Fabric, hérite de sa sémantique",
+        "deployed": false,
+        "ref": "",
+        "layer": 1,
+        "row": 0
+      },
+      {
+        "id": "voc",
+        "label": "Voice-Of-Customer",
+        "plane": "foundry",
+        "kind": "agent",
+        "detail": "file_search",
+        "contract": "le motif, jamais un chiffre",
+        "deployed": false,
+        "ref": "",
+        "layer": 1,
+        "row": 1
+      },
+      {
+        "id": "corpus",
+        "label": "voc-marketing-churn",
+        "plane": "foundry",
+        "kind": "store",
+        "detail": "verbatims clients",
+        "contract": "ce que les clients ont écrit, sans agrégat",
+        "deployed": false,
+        "ref": "",
+        "layer": 2,
+        "row": 1
+      },
+      {
+        "id": "data_agent",
+        "label": "Marketing_Churn_Agent",
+        "plane": "fabric",
+        "kind": "data_agent",
+        "detail": "",
+        "contract": "choisit DAX ou GQL selon la question",
+        "deployed": false,
+        "ref": "",
+        "layer": 2,
+        "row": 0
+      },
+      {
+        "id": "semantic_model",
+        "label": "SM_Marketing_Analytics",
+        "plane": "fabric",
+        "kind": "semantic_model",
+        "detail": "tout chiffre (DAX)",
+        "contract": "les mesures testées, seule source des totaux",
+        "deployed": false,
+        "ref": "",
+        "layer": 3,
+        "row": 0
+      },
+      {
+        "id": "ontology",
+        "label": "ONT_Customer360",
+        "plane": "fabric",
+        "kind": "ontology",
+        "detail": "les liens (GQL)",
+        "contract": "qui est relié à quoi, les causes, les chemins",
+        "deployed": false,
+        "ref": "",
+        "layer": 3,
+        "row": 1
+      },
+      {
+        "id": "lakehouse",
+        "label": "LH_Customer360",
+        "plane": "fabric",
+        "kind": "lakehouse",
+        "detail": "15 tables Delta",
+        "contract": "la vérité transactionnelle",
+        "deployed": false,
+        "ref": "",
+        "layer": 4,
+        "row": 0
+      }
+    ],
+    "edges": [
+      {
+        "from": "supervisor",
+        "to": "front_door",
+        "protocol": "A2A",
+        "label": "FrontDoorA2A",
+        "note": "les chiffres",
+        "short": "FrontDoorA2A"
+      },
+      {
+        "from": "supervisor",
+        "to": "voc",
+        "protocol": "A2A",
+        "label": "VoiceOfCustomerA2A",
+        "note": "les verbatims",
+        "short": "VoiceOfCustomerA2A"
+      },
+      {
+        "from": "front_door",
+        "to": "data_agent",
+        "protocol": "MCP",
+        "label": "MarketingChurnAgent",
+        "note": "fabric-iq",
+        "short": "MarketingChurnAgent"
+      },
+      {
+        "from": "voc",
+        "to": "corpus",
+        "protocol": "file_search",
+        "label": "",
+        "note": "",
+        "short": ""
+      },
+      {
+        "from": "data_agent",
+        "to": "semantic_model",
+        "protocol": "DAX",
+        "label": "",
+        "note": "",
+        "short": ""
+      },
+      {
+        "from": "data_agent",
+        "to": "ontology",
+        "protocol": "GQL",
+        "label": "",
+        "note": "",
+        "short": ""
+      },
+      {
+        "from": "semantic_model",
+        "to": "lakehouse",
+        "protocol": "Direct Lake",
+        "label": "",
+        "note": "",
+        "short": ""
+      },
+      {
+        "from": "ontology",
+        "to": "lakehouse",
+        "protocol": "Delta",
+        "label": "",
+        "note": "",
+        "short": ""
+      }
+    ],
+    "crossings": 0,
+    "planes": {
+      "foundry": "Foundry — orchestration",
+      "fabric": "Fabric — sémantique et données"
+    },
+    "projectEndpoint": "https://cdr-demo-foundry.services.ai.azure.com/api/projects/marketing-churn"
+  },
+  "ontology": {
+    "entities": [
+      {
+        "name": "Customer",
+        "table": "crm_customers",
+        "properties": 10
+      },
+      {
+        "name": "Account",
+        "table": "crm_accounts",
+        "properties": 5
+      },
+      {
+        "name": "Segment",
+        "table": "crm_segments",
+        "properties": 4
+      },
+      {
+        "name": "Campaign",
+        "table": "marketing_campaigns",
+        "properties": 5
+      },
+      {
+        "name": "Asset",
+        "table": "marketing_assets",
+        "properties": 5
+      },
+      {
+        "name": "Product",
+        "table": "products",
+        "properties": 5
+      },
+      {
+        "name": "Order",
+        "table": "orders",
+        "properties": 5
+      },
+      {
+        "name": "Interaction",
+        "table": "crm_interactions",
+        "properties": 6
+      }
+    ],
+    "relationships": [
+      {
+        "name": "CustomerInSegment",
+        "from": "Customer",
+        "to": "Segment"
+      },
+      {
+        "name": "CustomerBelongsToAccount",
+        "from": "Customer",
+        "to": "Account"
+      },
+      {
+        "name": "CampaignTargetsSegment",
+        "from": "Campaign",
+        "to": "Segment"
+      },
+      {
+        "name": "CampaignHasAsset",
+        "from": "Campaign",
+        "to": "Asset"
+      },
+      {
+        "name": "CampaignSentToCustomer",
+        "from": "Campaign",
+        "to": "Customer"
+      },
+      {
+        "name": "OrderPlacedByCustomer",
+        "from": "Order",
+        "to": "Customer"
+      },
+      {
+        "name": "OrderAttributedToCampaign",
+        "from": "Order",
+        "to": "Campaign"
+      },
+      {
+        "name": "OrderContainsProduct",
+        "from": "Order",
+        "to": "Product"
+      },
+      {
+        "name": "InteractionWithCustomer",
+        "from": "Interaction",
+        "to": "Customer"
+      }
+    ]
+  }
+}
