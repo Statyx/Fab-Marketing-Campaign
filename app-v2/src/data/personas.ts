@@ -51,6 +51,17 @@ export interface Persona {
   accent: string;
   welcome: string;
   suggestions: Suggestion[];
+  /**
+   * What this persona shows *before* anyone asks anything — the titles of the live panels it
+   * owns in `PersonaPanels`.
+   *
+   * It exists so the landing card can advertise the data. The previous card counted the canned
+   * questions by expected route ("2 modèle · 1 croisé"), which is a statement about the chat and
+   * says nothing about the charts — and "there are charts" is precisely what the app was failing
+   * to communicate. Kept in the registry rather than in the page so the claim sits next to the
+   * persona it describes and cannot drift from the panels that back it.
+   */
+  panels: string[];
 }
 
 /** Named once. The diagnosis screen must never name it — there it has to emerge from the data. */
@@ -63,6 +74,7 @@ export const PERSONAS: Persona[] = [
     description: "Pilotage global : valeur du portefeuille, exposition à l'attrition, NPS",
     icon: '🎯',
     accent: '#00008F',
+    panels: ['8 mesures du portefeuille', 'Répartition du risque'],
     welcome:
       "Bonjour, je suis l'assistant de pilotage de la relation client. Interrogez-moi sur le " +
       'chiffre d’affaires, la valeur du portefeuille, la part de clients à risque et la santé ' +
@@ -90,6 +102,7 @@ export const PERSONAS: Persona[] = [
     description: 'Détection : la cohorte à risque, ses signaux et les clients à rappeler',
     icon: '🛟',
     accent: '#027180',
+    panels: ['4 mesures de cohorte', 'Bandes de risque cliquables'],
     welcome:
       "Bonjour, je suis l'assistant rétention. Posez-moi vos questions sur les clients à " +
       'risque, leur récence, leur engagement, leurs désabonnements et la friction support.',
@@ -117,6 +130,7 @@ export const PERSONAS: Persona[] = [
     description: 'Diagnostic : pression email par campagne, désabonnements, engagement',
     icon: '📣',
     accent: '#896610',
+    panels: ['Pression e-mail par campagne', 'Détection d’écart automatique'],
     welcome:
       "Bonjour, je suis l'assistant marketing. Interrogez-moi sur la pression commerciale par " +
       "campagne, les taux d'ouverture, de clic et de désabonnement, et la cause racine de " +
@@ -154,6 +168,7 @@ export const PERSONAS: Persona[] = [
     description: "Impact business : chiffre d'affaires, panier, attribution, retours",
     icon: '🛒',
     accent: '#863C41',
+    panels: ['CLV et CA exposés', 'Exposition par segment'],
     welcome:
       "Bonjour, je suis l'assistant commerce. Posez-moi vos questions sur le chiffre " +
       "d'affaires, le panier moyen, les catégories de produits, l'attribution des campagnes " +

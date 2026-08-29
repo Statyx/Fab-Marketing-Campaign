@@ -1,5 +1,11 @@
 /**
- * One conversation per persona.
+ * One persona = one cockpit: the figures and the conversation about them, on the same screen.
+ *
+ * ── Why the two used to be apart, and why that was the defect ───────────────────────────
+ * The charts lived on four "Parcours guidé" screens named after a method (Détecter, Diagnostiquer,
+ * Quantifier, Agir) while the personas held a chat with no data at all. Same four topics, two
+ * navigations, and nothing on the persona screen said that live DAX ran anywhere in the product —
+ * so the app was read as a chatbot. The arc screens were merged in here and deleted.
  *
  * Two claims are kept apart on this screen, because collapsing them is how a demo starts lying:
  *
@@ -19,6 +25,7 @@ import { useParams, Navigate } from 'react-router-dom';
 
 import { AppShell } from '@/components/AppShell';
 import { Markdown } from '@/components/Markdown';
+import { PersonaPanels } from '@/components/PersonaPanels';
 import { personaByKey, type Source } from '@/data/personas';
 import { askSupervisor, foundryConfigured } from '@/services/foundry';
 
@@ -222,43 +229,86 @@ export function AgentPage() {
 
   return (
     <AppShell wide>
-      <div className="grid gap-6 lg:grid-cols-[1fr_20rem]">
+      <header className="flex items-center gap-4">
+        <span
+          className="flex h-14 w-14 items-center justify-center rounded-2xl text-2xl"
+          style={{ background: `${persona.accent}1A` }}
+        >
+          {persona.icon}
+        </span>
+        <div className="min-w-0">
+          <h1 className="text-xl font-semibold" style={{ color: 'var(--text-primary)' }}>
+            {persona.name}
+          </h1>
+          <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+            {persona.description}
+          </p>
+        </div>
+      </header>
+
+      {!foundryConfigured && (
+        <p className="mt-4 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          VITE_FOUNDRY_ENDPOINT n’est pas configuré : la conversation ne peut pas être envoyée.
+        </p>
+      )}
+
+      {/* Data on the left, conversation on the right — one screen, so the audience sees that the
+          figures and the agent are the same product rather than two features. */}
+      <div className="mt-6 grid items-start gap-6 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)]">
         <section className="min-w-0">
-          <header className="flex items-center gap-4">
-            <span
-              className="flex h-14 w-14 items-center justify-center rounded-2xl text-2xl"
-              style={{ background: `${persona.accent}1A` }}
-            >
-              {persona.icon}
-            </span>
-            <div>
-              <h1 className="text-xl font-semibold" style={{ color: 'var(--text-primary)' }}>
-                Assistant {persona.name}
-              </h1>
-              <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-                {persona.description}
-              </p>
-            </div>
-          </header>
+          <PersonaPanels
+            personaKey={persona.key}
+            busy={pending}
+            // A click on a figure always produces a `mixed` question: the chart already holds the
+            // number, so what is left to ask is the *why* — which forces both subordinates to fire
+            // and is the only moment the supervisor is visibly supervising.
+            onAsk={(q) => void send(q, 'mixed')}
+          />
+        </section>
 
-          {!foundryConfigured && (
-            <p className="mt-4 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-              VITE_FOUNDRY_ENDPOINT n’est pas configuré : la conversation ne peut pas être envoyée.
-            </p>
-          )}
+        <section className="flex min-w-0 flex-col lg:sticky lg:top-28 lg:max-h-[calc(100vh-9rem)]">
+          <h2
+            className="mb-3 text-xs font-semibold uppercase tracking-wide"
+            style={{ color: 'var(--text-muted)' }}
+          >
+            Superviseur Foundry
+          </h2>
 
-          <div className="mt-5 space-y-4">
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
             <div className="glass rounded-2xl p-4">
               <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
                 {persona.welcome}
               </p>
             </div>
 
+            {turns.length === 0 && (
+              <div className="space-y-2">
+                {persona.suggestions.map((s) => (
+                  <button
+                    key={s.q}
+                    onClick={() => void send(s.q, s.expects)}
+                    disabled={pending}
+                    className="glass w-full rounded-xl p-3 text-left text-sm transition hover:-translate-y-0.5 disabled:opacity-50"
+                    style={{ color: 'var(--text-primary)' }}
+                  >
+                    {s.q}
+                    <span className="mt-2 flex">
+                      <SourceChip source={s.expects} />
+                    </span>
+                  </button>
+                ))}
+                <p className="pt-1 text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                  Le badge annonce la source <em>attendue</em>. La route réellement empruntée
+                  s’affiche sous la réponse — et peut différer.
+                </p>
+              </div>
+            )}
+
             {turns.map((t) => (
               <div key={t.id} className="space-y-3">
                 <div className="flex justify-end">
                   <div
-                    className="max-w-[80%] rounded-2xl px-4 py-2.5 text-sm text-white"
+                    className="max-w-[85%] rounded-2xl px-4 py-2.5 text-sm text-white"
                     style={{ background: persona.accent }}
                   >
                     {t.question}
@@ -301,7 +351,7 @@ export function AgentPage() {
           </div>
 
           <form
-            className="mt-5 flex gap-2"
+            className="mt-3 flex gap-2"
             onSubmit={(e) => {
               e.preventDefault();
               void send(draft, null);
@@ -311,7 +361,7 @@ export function AgentPage() {
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               disabled={pending}
-              placeholder={`Posez une question à l’assistant ${persona.name}…`}
+              placeholder="Nommez la table et la colonne…"
               className="glass min-w-0 flex-1 rounded-full px-5 py-3 text-sm outline-none disabled:opacity-60"
               style={{ color: 'var(--text-primary)' }}
             />
@@ -325,36 +375,6 @@ export function AgentPage() {
             </button>
           </form>
         </section>
-
-        <aside className="lg:sticky lg:top-32 lg:self-start">
-          <h2
-            className="mb-3 text-xs font-semibold uppercase tracking-wide"
-            style={{ color: 'var(--text-muted)' }}
-          >
-            Questions suggérées
-          </h2>
-          <div className="space-y-2">
-            {persona.suggestions.map((s) => (
-              <button
-                key={s.q}
-                onClick={() => void send(s.q, s.expects)}
-                disabled={pending}
-                className="glass w-full rounded-xl p-3 text-left text-sm transition hover:-translate-y-0.5 disabled:opacity-50"
-                style={{ color: 'var(--text-primary)' }}
-              >
-                {s.q}
-                <span className="mt-2 flex">
-                  <SourceChip source={s.expects} />
-                </span>
-              </button>
-            ))}
-          </div>
-
-          <p className="mt-4 text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-            Le badge annonce la source <em>attendue</em>. La route réellement empruntée s’affiche
-            sous la réponse — et peut différer.
-          </p>
-        </aside>
       </div>
     </AppShell>
   );

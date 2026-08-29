@@ -2,14 +2,10 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 
 import { AuthPage } from '@/components/AuthPage';
 import { useAuth } from '@/hooks/AuthContext';
-import { ActPage } from '@/pages/ActPage';
 import { AgentPage } from '@/pages/AgentPage';
 import { ArchitecturePage } from '@/pages/ArchitecturePage';
-import { DetectPage } from '@/pages/DetectPage';
-import { DiagnosePage } from '@/pages/DiagnosePage';
 import { DiagnosticsPage } from '@/pages/DiagnosticsPage';
 import { LandingPage } from '@/pages/LandingPage';
-import { QuantifyPage } from '@/pages/QuantifyPage';
 
 function AuthGuard({
   children,
@@ -47,7 +43,7 @@ function App() {
             </AuthGuard>
           }
         />
-        {/* The landing page leads: four personas first, the arc as a guided path underneath. */}
+        {/* The landing page leads: four personas, each holding its own figures and its own agent. */}
         <Route
           path="/"
           element={
@@ -64,39 +60,13 @@ function App() {
             </AuthGuard>
           }
         />
-        {/* The arc is the demo: Detect → Diagnose → Quantify → Act. */}
-        <Route
-          path="/detect"
-          element={
-            <AuthGuard requireAuth={true}>
-              <DetectPage />
-            </AuthGuard>
-          }
-        />
-        <Route
-          path="/diagnose"
-          element={
-            <AuthGuard requireAuth={true}>
-              <DiagnosePage />
-            </AuthGuard>
-          }
-        />
-        <Route
-          path="/quantify"
-          element={
-            <AuthGuard requireAuth={true}>
-              <QuantifyPage />
-            </AuthGuard>
-          }
-        />
-        <Route
-          path="/act"
-          element={
-            <AuthGuard requireAuth={true}>
-              <ActPage />
-            </AuthGuard>
-          }
-        />
+        {/* The four "Parcours guidé" URLs. Their screens were merged into the personas that
+            already owned those subjects; the paths are kept as redirects rather than left to
+            404, because they are in the demo's muscle memory and in a bookmark or two. */}
+        <Route path="/detect" element={<Navigate to="/agent/retention" replace />} />
+        <Route path="/diagnose" element={<Navigate to="/agent/marketing" replace />} />
+        <Route path="/quantify" element={<Navigate to="/agent/commerce" replace />} />
+        <Route path="/act" element={<Navigate to="/agent/direction" replace />} />
         {/* Inside the guard: the page asks Fabric and Foundry what exists, so it needs a token.
             Without one every box would land in 'non vérifié' and the picture would say nothing. */}
         <Route

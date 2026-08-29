@@ -18,8 +18,14 @@ interface Props {
 export function QueryState({ loading, error, empty, onRetry, children }: Props) {
   if (loading) {
     return (
-      <div className="flex items-center gap-3 p-6 text-sm text-slate-500">
-        <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" />
+      <div
+        className="flex items-center gap-3 p-6 text-sm"
+        style={{ color: 'var(--text-secondary)' }}
+      >
+        <span
+          className="h-4 w-4 animate-spin rounded-full border-2 border-t-transparent"
+          style={{ borderColor: 'var(--accent)', borderTopColor: 'transparent' }}
+        />
         Interrogation du modèle sémantique…
       </div>
     );
@@ -43,7 +49,11 @@ export function QueryState({ loading, error, empty, onRetry, children }: Props) 
   }
 
   if (empty) {
-    return <div className="p-6 text-sm text-slate-500">Aucune donnée retournée.</div>;
+    return (
+      <div className="p-6 text-sm" style={{ color: 'var(--text-secondary)' }}>
+        Aucune donnée retournée.
+      </div>
+    );
   }
 
   return <>{children}</>;

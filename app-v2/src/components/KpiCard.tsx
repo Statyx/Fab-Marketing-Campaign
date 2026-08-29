@@ -4,6 +4,15 @@
  * Showing the measure name is not decoration: every number on these screens is evaluated by
  * SM_Marketing_Analytics, and printing which measure it came from is what lets someone
  * reproduce it in Power BI instead of taking the app's word for it.
+ *
+ * Two changes when the arc screens were folded into the personas:
+ *
+ *  - **Themed.** It used to hardcode `bg-white` / `text-slate-900`, which is why the guided
+ *    screens stayed a light rectangle in dark mode while everything around them repainted.
+ *    A card that ignores the theme is not a styling detail — it was half the app unreadable
+ *    at night.
+ *  - **Compact.** It now sits in a column beside a conversation rather than across a full
+ *    page, so the callout drops from `text-3xl` to `text-2xl`.
  */
 interface Props {
   label: string;
@@ -14,18 +23,32 @@ interface Props {
 }
 
 const TONES: Record<NonNullable<Props['tone']>, string> = {
-  default: 'text-slate-900',
-  alert: 'text-red-600',
-  good: 'text-emerald-600',
+  default: 'var(--text-primary)',
+  alert: '#dc2626',
+  good: '#059669',
 };
 
 export function KpiCard({ label, value, measure, hint, tone = 'default' }: Props) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-      <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</p>
-      <p className={`mt-2 text-3xl font-semibold tabular-nums ${TONES[tone]}`}>{value}</p>
-      {hint && <p className="mt-1 text-xs text-slate-500">{hint}</p>}
-      <p className="mt-3 border-t border-slate-100 pt-2 font-mono text-[10px] text-slate-400">
+    <div className="glass rounded-xl p-4">
+      <p
+        className="text-[0.625rem] font-semibold uppercase tracking-wide"
+        style={{ color: 'var(--text-muted)' }}
+      >
+        {label}
+      </p>
+      <p className="mt-1.5 text-2xl font-bold tabular-nums" style={{ color: TONES[tone] }}>
+        {value}
+      </p>
+      {hint && (
+        <p className="mt-0.5 text-[0.6875rem]" style={{ color: 'var(--text-secondary)' }}>
+          {hint}
+        </p>
+      )}
+      <p
+        className="mt-2.5 border-t pt-1.5 font-mono text-[0.625rem]"
+        style={{ borderColor: 'var(--border)', color: 'var(--text-muted)' }}
+      >
         {measure}
       </p>
     </div>

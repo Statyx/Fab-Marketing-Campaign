@@ -5,11 +5,17 @@
  * V2's first cut laid the same material out as the top of a scrolling page under a nav bar, and
  * the user's read was immediate — "j'avais une page d'arrivée qui était classe". The material was
  * never the problem, the staging was. So this page is centred in the viewport, the shell's nav
- * and arc strip are suppressed (`<AppShell cover>`), and the sections fade in staggered.
+ * is suppressed (`<AppShell cover>`), and the sections fade in staggered.
  *
  * It is also a directory, not just a hero: every route the app owns is reachable from here —
- * four assistants, four guided steps, two platform screens. That is what makes it a portal
- * rather than a splash.
+ * four assistants and two platform screens. That is what makes it a portal rather than a splash.
+ *
+ * The guided arc that used to sit here (Détecter / Diagnostiquer / Quantifier / Agir) is gone.
+ * It was a second navigation over the same subject: the four steps held every chart and no chat,
+ * the four assistants held every chat and no chart, and each persona's own description already
+ * used the arc's vocabulary. The charts now live inside the assistant they belong to, so the
+ * persona cards advertise their panels rather than counting canned questions — "there are charts
+ * behind this" is what the cover has to say, and counting questions never said it.
  *
  * The tiles read the semantic model. A landing page is exactly where a hardcoded "12 000
  * clients" would survive longest without anyone noticing it had gone stale, so the numbers are
@@ -20,19 +26,11 @@
 import { Link } from 'react-router-dom';
 
 import { AppShell } from '@/components/AppShell';
-import { PERSONAS, type Source } from '@/data/personas';
+import { PERSONAS } from '@/data/personas';
 import { useDax } from '@/hooks/useDax';
 import { LANDING_DAX, mapLanding, type LandingStats } from '@/services/queries';
 
 const fr = new Intl.NumberFormat('fr-FR');
-
-/** The four steps of the guided arc, restated as doors rather than as a nav strip. */
-const STEPS = [
-  { to: '/detect', n: '1', label: 'Détecter', hint: 'La cohorte à risque et ce qu’elle pèse' },
-  { to: '/diagnose', n: '2', label: 'Diagnostiquer', hint: 'La pression email, campagne par campagne' },
-  { to: '/quantify', n: '3', label: 'Quantifier', hint: 'La valeur exposée et le manque à gagner' },
-  { to: '/act', n: '4', label: 'Agir', hint: 'Les clients à rappeler, par priorité' },
-];
 
 /** The two screens that describe the platform itself rather than the business. */
 const PLATFORM = [
@@ -195,23 +193,12 @@ export function LandingPage() {
           <SectionLabel>Assistants — poser la question en langage naturel</SectionLabel>
 
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {PERSONAS.map((p) => {
-              // Counted per route rather than "everything that is not the ontology", which is
-              // what the previous subtraction did — it would have filed the corpus questions
-              // under "modèle" the moment a second subordinate became reachable.
-              const count = (s: Source) => p.suggestions.filter((q) => q.expects === s).length;
-              const chips: Array<[number, string]> = [
-                [count('model'), 'modèle'],
-                [count('ontology'), 'ontologie'],
-                [count('voc'), 'verbatims'],
-                [count('mixed'), 'croisé'],
-              ];
-              return (
-                <Link
-                  key={p.key}
-                  to={`/agent/${p.key}`}
-                  className="glass portal-card rounded-2xl p-6"
-                  style={{ ['--card-accent' as string]: p.accent }}
+            {PERSONAS.map((p) => (
+              <Link
+                key={p.key}
+                to={`/agent/${p.key}`}
+                className="glass portal-card rounded-2xl p-6"
+                style={{ ['--card-accent' as string]: p.accent }}
                 >
                   <span className="flex items-center gap-3">
                     <span
@@ -235,96 +222,60 @@ export function LandingPage() {
                     {p.description}
                   </p>
 
-                  {/* Derived from the persona registry, never typed in: the split is a claim
-                      about which route each canned question is *expected* to take. */}
+                  {/* What the persona *shows*, not what it can be asked. The card used to count
+                      canned questions by expected route — a statement about the chat, on a page
+                      whose problem was that nothing announced the charts. */}
                   <span className="mt-4 flex flex-wrap items-center gap-1.5">
-                    {chips
-                      .filter(([n]) => n > 0)
-                      .map(([n, label]) => (
-                        <span
-                          key={label}
-                          className="portal-chip rounded-md px-2 py-1 text-[0.625rem] font-bold uppercase tracking-wide"
-                        >
-                          {n} {label}
-                        </span>
-                      ))}
+                    {p.panels.map((label) => (
+                      <span
+                        key={label}
+                        className="portal-chip rounded-md px-2 py-1 text-[0.625rem] font-bold uppercase tracking-wide"
+                      >
+                        {label}
+                      </span>
+                    ))}
                     <span className="portal-arrow ml-auto text-lg" style={{ color: p.accent }}>
                       →
                     </span>
                   </span>
                 </Link>
-              );
-            })}
+              ))}
           </div>
+
+          <p className="mt-3 text-xs" style={{ color: 'var(--text-muted)' }}>
+            Chaque assistant ouvre sur ses propres chiffres — mesures Direct Lake à gauche,
+            conversation à droite. Cliquer un chiffre pose la question au superviseur.
+          </p>
         </section>
 
-        <section className="portal-in portal-d3 grid gap-6 lg:grid-cols-[3fr_2fr]">
-          <div>
-            <SectionLabel>Parcours guidé — la même donnée, dans l’ordre de la question</SectionLabel>
-            <div className="grid gap-3 sm:grid-cols-2">
-              {STEPS.map((st) => (
-                <Link
-                  key={st.to}
-                  to={st.to}
-                  className="glass portal-card flex items-center gap-3 rounded-xl px-4 py-3"
-                >
+        <section className="portal-in portal-d3">
+          <SectionLabel>Plateforme</SectionLabel>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {PLATFORM.map((m) => (
+              <Link
+                key={m.to}
+                to={m.to}
+                className="glass portal-card flex items-center gap-3 rounded-xl px-4 py-3"
+              >
+                <span className="text-lg" aria-hidden>
+                  {m.icon}
+                </span>
+                <span className="min-w-0">
                   <span
-                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg font-mono text-sm font-bold"
-                    style={{ background: 'var(--accent-soft)', color: 'var(--accent)' }}
+                    className="block text-sm font-semibold"
+                    style={{ color: 'var(--text-primary)' }}
                   >
-                    {st.n}
+                    {m.label}
                   </span>
-                  <span className="min-w-0">
-                    <span
-                      className="block text-sm font-semibold"
-                      style={{ color: 'var(--text-primary)' }}
-                    >
-                      {st.label}
-                    </span>
-                    <span
-                      className="block truncate text-xs"
-                      style={{ color: 'var(--text-muted)' }}
-                    >
-                      {st.hint}
-                    </span>
+                  <span className="block text-xs" style={{ color: 'var(--text-muted)' }}>
+                    {m.hint}
                   </span>
-                  <span className="portal-arrow ml-auto" style={{ color: 'var(--accent)' }}>
-                    →
-                  </span>
-                </Link>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <SectionLabel>Plateforme</SectionLabel>
-            <div className="grid gap-3">
-              {PLATFORM.map((m) => (
-                <Link
-                  key={m.to}
-                  to={m.to}
-                  className="glass portal-card flex items-center gap-3 rounded-xl px-4 py-3"
-                >
-                  <span className="text-lg" aria-hidden>
-                    {m.icon}
-                  </span>
-                  <span className="min-w-0">
-                    <span
-                      className="block text-sm font-semibold"
-                      style={{ color: 'var(--text-primary)' }}
-                    >
-                      {m.label}
-                    </span>
-                    <span className="block text-xs" style={{ color: 'var(--text-muted)' }}>
-                      {m.hint}
-                    </span>
-                  </span>
-                  <span className="portal-arrow ml-auto" style={{ color: 'var(--accent)' }}>
-                    →
-                  </span>
-                </Link>
-              ))}
-            </div>
+                </span>
+                <span className="portal-arrow ml-auto" style={{ color: 'var(--accent)' }}>
+                  →
+                </span>
+              </Link>
+            ))}
           </div>
         </section>
 

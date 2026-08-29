@@ -1,10 +1,10 @@
 /**
  * Application shell.
  *
- * V1's structure, restored: the four agent personas lead, and the Detect → Diagnose → Quantify
- * → Act arc sits underneath as a guided path. The arc is still the argument, but it is one
- * reading of the data among several — putting it in the only navigation made the app feel like
- * a slideshow with four slides.
+ * One navigation: the four agent personas. There used to be a second row underneath — the
+ * Detect → Diagnose → Quantify → Act arc — and it was not a complement, it was a duplicate:
+ * the same four subjects filed under method names, holding all the charts while the personas
+ * held all the conversation. The charts moved into the personas and the arc came out.
  *
  * The header stays dark in both themes, as in V1: it is the one fixed anchor while the page
  * below repaints between light and dark.
@@ -20,13 +20,6 @@ import { ThemeToggle } from '@/components/ThemeToggle';
 import { PERSONAS } from '@/data/personas';
 import { useAuth } from '@/hooks/AuthContext';
 
-const STEPS = [
-  { to: '/detect', n: '1', label: 'Détecter' },
-  { to: '/diagnose', n: '2', label: 'Diagnostiquer' },
-  { to: '/quantify', n: '3', label: 'Quantifier' },
-  { to: '/act', n: '4', label: 'Agir' },
-];
-
 export function AppShell({
   title,
   intro,
@@ -37,11 +30,11 @@ export function AppShell({
   title?: string;
   intro?: string;
   children: ReactNode;
-  /** Landing and chat want the full width; the arc screens read better in a column. */
+  /** Landing and chat want the full width; the utility screens read better in a column. */
   wide?: boolean;
   /**
-   * Cover mode, for the landing only: the persona pills and the guided-arc strip come out of
-   * the header, and the page owns the viewport.
+   * Cover mode, for the landing only: the persona pills come out of the header and the page owns
+   * the viewport.
    *
    * Not cosmetic. On the landing every one of those links is *also* a card below, so the strip
    * was a second, smaller copy of the page's whole purpose sitting on top of it — which is
@@ -115,46 +108,32 @@ export function AppShell({
           </div>
         </div>
 
-        {/* Secondary: the guided arc. Still one click away, no longer the only way in. */}
+        {/* Secondary row: the two utility screens. The guided arc used to sit here as a second
+            navigation over the same four subjects — its charts now live inside the personas. */}
         {!cover && (
           <div className="border-t border-white/5">
-          <div className="mx-auto flex max-w-[1400px] items-center gap-2 px-6 py-2">
-            <span className="mr-1 text-[11px] uppercase tracking-wide text-slate-500">
-              Parcours guidé
-            </span>
-            {STEPS.map((s) => (
+            <div className="mx-auto flex max-w-[1400px] items-center gap-4 px-6 py-2">
               <NavLink
-                key={s.to}
-                to={s.to}
+                to="/architecture"
                 className={({ isActive }) =>
-                  `flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs transition ${
-                    isActive
-                      ? 'bg-white/15 text-white'
-                      : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'
+                  `text-xs transition ${
+                    isActive ? 'text-slate-200' : 'text-slate-500 hover:text-slate-300'
                   }`
                 }
               >
-                <span className="font-mono text-[10px] opacity-60">{s.n}</span>
-                {s.label}
+                Architecture
               </NavLink>
-            ))}
-            <NavLink
-              to="/architecture"
-              className={({ isActive }) =>
-                `ml-auto text-xs transition ${
-                  isActive ? 'text-slate-200' : 'text-slate-500 hover:text-slate-300'
-                }`
-              }
-            >
-              Architecture
-            </NavLink>
-            <NavLink
-              to="/diagnostics"
-              className="text-xs text-slate-500 hover:text-slate-300"
-            >
-              Contrôle de connectivité
-            </NavLink>
-          </div>
+              <NavLink
+                to="/diagnostics"
+                className={({ isActive }) =>
+                  `text-xs transition ${
+                    isActive ? 'text-slate-200' : 'text-slate-500 hover:text-slate-300'
+                  }`
+                }
+              >
+                Contrôle de connectivité
+              </NavLink>
+            </div>
           </div>
         )}
       </header>
