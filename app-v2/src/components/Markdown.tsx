@@ -100,7 +100,7 @@ export function Markdown({ text }: { text: string }) {
       }
       blocks.push(
         <div key={key++} className="my-3 overflow-x-auto">
-          <table className="w-full border-collapse text-sm">
+          <table className="w-full border-collapse text-[inherit]">
             <thead>
               <tr>
                 {head.map((h, n) => (
@@ -166,7 +166,7 @@ export function Markdown({ text }: { text: string }) {
         items.push(lines[i].replace(/^\s*([-*+]|\d+\.)\s+/, ''));
         i += 1;
       }
-      const cls = 'my-2 space-y-1 pl-5 text-sm';
+      const cls = 'my-2 space-y-1 pl-5';
       blocks.push(
         ordered ? (
           <ol key={key++} className={`list-decimal ${cls}`}>
@@ -198,7 +198,7 @@ export function Markdown({ text }: { text: string }) {
       i += 1;
     }
     blocks.push(
-      <p key={key++} className="my-2 text-sm leading-relaxed">
+      <p key={key++} className="my-2 leading-relaxed">
         {inline(buf.join(' '))}
       </p>
     );

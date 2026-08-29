@@ -12,7 +12,9 @@
  *    A card that ignores the theme is not a styling detail — it was half the app unreadable
  *    at night.
  *  - **Compact.** It now sits in a column beside a conversation rather than across a full
- *    page, so the callout drops from `text-3xl` to `text-2xl`.
+ *    page, so the callout drops from `text-3xl` to `text-xl`. The first cut kept `text-2xl`
+ *    and read as oversized once four cards sat on one row — a KPI grid is scanned, and a
+ *    figure only has to be the largest thing in its own card, not on the screen.
  */
 interface Props {
   label: string;
@@ -37,7 +39,7 @@ export function KpiCard({ label, value, measure, hint, tone = 'default' }: Props
       >
         {label}
       </p>
-      <p className="mt-1.5 text-2xl font-bold tabular-nums" style={{ color: TONES[tone] }}>
+      <p className="mt-1.5 text-xl font-bold tabular-nums" style={{ color: TONES[tone] }}>
         {value}
       </p>
       {hint && (

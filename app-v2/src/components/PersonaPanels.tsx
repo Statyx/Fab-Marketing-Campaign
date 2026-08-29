@@ -108,7 +108,7 @@ function RetentionPanels({ onAsk, busy }: PanelProps) {
         </PanelTitle>
         <QueryState loading={kpis.loading} error={kpis.error} onRetry={kpis.reload}>
           {kpis.data && (
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
               <KpiCard
                 label="Clients à risque"
                 value={fmtInt(kpis.data.atRisk)}
@@ -458,7 +458,7 @@ function DirectionPanels({ onAsk, busy }: PanelProps) {
         </PanelTitle>
         <QueryState loading={kpis.loading} error={kpis.error} onRetry={kpis.reload}>
           {kpis.data && (
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
               <KpiCard
                 label="Clients"
                 value={fmtInt(kpis.data.totalCustomers)}
