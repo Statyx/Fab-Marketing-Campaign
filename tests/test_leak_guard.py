@@ -114,15 +114,41 @@ def test_the_attachment_exemption_covers_the_url_and_nothing_else(guard):
 def test_the_committed_readme_screenshots_survive(guard):
     """The three screenshots exist and the guard is silent on them.
 
-    Counts real URLs (prefix + a 36-char id), not the bare prefix: the hygiene section
-    quotes the prefix in prose, and a substring count would drift with the documentation.
+    Counts URLs carried by an <img> tag, not every attachment URL in the file: the teaser
+    video is also a user-attachments asset, so a flat count would conflate two unrelated
+    things and would have to be edited every time a media asset is added — exactly the
+    drift that makes a guard stop meaning anything.
     """
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    urls = re.findall(r"github\.com/user-attachments/assets/[0-9a-fA-F-]{36}", readme)
-    assert len(urls) == 3, urls
+    images = re.findall(
+        r'<img[^>]+src="https://github\.com/user-attachments/assets/[0-9a-fA-F-]{36}"',
+        readme,
+    )
+    assert len(images) == 3, images
     for lineno, line in enumerate(readme.splitlines(), start=1):
         if "user-attachments" in line:
             assert not _scan(guard, line), f"README line {lineno} tripped the guard"
+
+
+def test_the_readme_teaser_stays_playable(guard):
+    """The inline player is a bare attachment URL alone on its line, and only that.
+
+    Measured against GitHub's own /markdown API: a bare user-attachments URL is expanded
+    into a <details> + <video>; the same file linked from the repo is served
+    application/octet-stream with nosniff and only ever downloads. Rewriting this line as
+    a markdown link would silently turn the player back into a download, with nothing in
+    the diff saying so.
+    """
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    bare = [
+        line.strip()
+        for line in readme.splitlines()
+        if re.fullmatch(
+            r"https://github\.com/user-attachments/assets/[0-9a-fA-F-]{36}", line.strip()
+        )
+    ]
+    assert len(bare) == 1, bare
+    assert not _scan(guard, bare[0])
 
 
 # ── Fabric endpoint ─────────────────────────────────────────────

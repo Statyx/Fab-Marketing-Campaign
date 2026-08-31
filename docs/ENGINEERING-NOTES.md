@@ -62,7 +62,7 @@ skipped with a warning, never a failure.**
 identifiers or a regenerable dataset; CI fails if any of them ever becomes tracked. The
 test suite is offline by construction — CI materialises `config.yaml` / `state.json` from
 the committed `*.example` files, regenerates the dataset from its seed, and needs no
-secret, no Azure credential and no capacity. **All 585 tests run; a skip fails the job**,
+secret, no Azure credential and no capacity. **All 586 tests run; a skip fails the job**,
 because a skipped test is a test that did not run, and the dataset tests are the ones
 guarding behaviour-before-labels.
 

@@ -8,7 +8,7 @@ answer in natural language — and show where they looked.
 ![Fabric](https://img.shields.io/badge/Microsoft_Fabric-Lakehouse_+_Direct_Lake-purple?style=for-the-badge&logo=microsoft)
 ![Foundry](https://img.shields.io/badge/Microsoft_Foundry-supervisor_+_2_agents-orange?style=for-the-badge)
 ![Deploy](https://img.shields.io/badge/deploy-idempotent_(state.json)-blue?style=for-the-badge)
-![Tests](https://img.shields.io/badge/tests-585_passing-brightgreen?style=for-the-badge)
+![Tests](https://img.shields.io/badge/tests-586_passing-brightgreen?style=for-the-badge)
 [![CI](https://github.com/Statyx/Fab-Marketing-Campaign/actions/workflows/no-client-leak.yml/badge.svg)](https://github.com/Statyx/Fab-Marketing-Campaign/actions/workflows/no-client-leak.yml)
 
 > **All data in this repository is synthetic**, generated from a seed by
@@ -24,7 +24,9 @@ the hard-won traps in [`docs/ENGINEERING-NOTES.md`](docs/ENGINEERING-NOTES.md).
 
 ## Every month, customers leave — often in silence.
 
-### ▶ [Watch the teaser (English)](marketing/teaser-c360-en.mp4) · [Version française](marketing/teaser-c360.mp4)
+https://github.com/user-attachments/assets/40fde360-6894-457d-8a9d-b99bb6928293
+
+> Full quality: **[`marketing/teaser-c360-en.mp4`](marketing/teaser-c360-en.mp4)** · [Version française](marketing/teaser-c360.mp4)
 
 Churn demos usually draw `churn_risk_score` at random, and collapse the moment someone asks
 *"why is this customer at risk?"*. Here the generator simulates **behaviour first** — sends, opens,
@@ -42,7 +44,7 @@ it. The correlations that follow are [measured and gated](#the-churn-model), not
 | `portal/` | **The portal (V1)** | FastAPI app, four personas, embedded report pages + data agent chat, `http://localhost:8000` |
 | `taskflow/` | **Workspace task flow** | Generated task-flow JSON + import instructions, so the workspace reads as a journey |
 | `theme/` | **Design** | Accessible Fluent-2 Power BI theme, WCAG and colour-blind checked |
-| `tests/` | **The gate** | 585 offline tests — data signal, report ↔ model, layout, leak guard, task flow, supervisor |
+| `tests/` | **The gate** | 586 offline tests — data signal, report ↔ model, layout, leak guard, task flow, supervisor |
 | `docs/` | **Documentation** | Architecture, engineering notes, screenshots |
 | `marketing/` | **Assets** | Teaser videos and the screenshots used here |
 | `.github/` | **CI** | Client-leak guard + pytest, on every branch and PR |
