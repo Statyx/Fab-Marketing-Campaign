@@ -6,7 +6,7 @@
         "label": "Marketing-Supervisor",
         "plane": "foundry",
         "kind": "agent",
-        "detail": "gpt-5.4",
+        "detail": "gpt-4o",
         "contract": "route et relaie mot pour mot, ne calcule jamais",
         "deployed": false,
         "ref": "",
@@ -119,9 +119,9 @@
         "from": "front_door",
         "to": "data_agent",
         "protocol": "MCP",
-        "label": "MarketingChurnAgent",
+        "label": "<your-fabric-iq-connection>",
         "note": "fabric-iq",
-        "short": "MarketingChurnAgent"
+        "short": ""
       },
       {
         "from": "voc",
@@ -169,7 +169,7 @@
       "foundry": "Foundry — orchestration",
       "fabric": "Fabric — sémantique et données"
     },
-    "projectEndpoint": "https://cdr-demo-foundry.services.ai.azure.com/api/projects/marketing-churn"
+    "projectEndpoint": "https://<resource>.services.ai.azure.com/api/projects/<project>"
   },
   "ontology": {
     "entities": [

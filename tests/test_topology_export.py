@@ -27,6 +27,13 @@ GENERATED = ROOT / "app-v2" / "src" / "data" / "topology.generated.json"
 
 GUID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 
+# Second shape rule, for what the GUID one structurally cannot see: the label sitting in front
+# of an Azure service domain is a tenant's resource name.
+AZURE_HOST = re.compile(
+    r"https?://([^/\s\"]+?)\."
+    r"(?:services\.ai\.azure\.com|api\.fabric\.microsoft\.com|webapp\.fabricapps\.net)"
+)
+
 
 def _load_generator():
     """Import the generator by path: `app-v2` is not an importable package name (hyphen)."""
@@ -55,14 +62,61 @@ def builder():
 def test_the_committed_topology_matches_its_generator(shipped):
     """The file on disk is what the generator produces today, not what it produced once.
 
-    Compared against the generator rather than against hard-coded expectations, so an operator
-    whose `config.yaml` names differ from the defaults still passes — as long as they
-    regenerated. The thing being pinned is "regenerate after you edit", not the operator's
-    choice of workspace names.
+    This is only a real comparison because the generator reads committed inputs only. While it
+    read the gitignored `src/config.yaml`, the committed artefact could be reproduced on
+    exactly one machine and this test was red on every other — CI included — with a message
+    ("run gen_topology.py") that could not fix it, since regenerating re-baked the same private
+    values. What is pinned is "regenerate after you edit"; see the test below for what keeps
+    that statement true.
     """
     assert shipped == _load_generator().build(), (
         "topology.generated.json is stale — run `python app-v2/scripts/gen_topology.py`"
     )
+
+
+def test_the_generator_reads_only_committed_inputs():
+    """The comparison above is worth nothing if the generator's input is not in the repo.
+
+    Exact string equality over AST constants, not a text search: this module and the generator
+    both *discuss* `config.yaml` at length, and a grep-shaped rule would fire on its own
+    explanation. The same reason `test_no_src_module_imports_winreg_unconditionally` reads the
+    tree rather than the characters.
+    """
+    import ast
+
+    tree = ast.parse(
+        (ROOT / "app-v2" / "scripts" / "gen_topology.py").read_text(encoding="utf-8")
+    )
+    literals = {
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    }
+    assert "config.yaml" not in literals, (
+        "gen_topology.py reads the gitignored src/config.yaml again: its output stops being "
+        "reproducible anywhere else, and operator values re-enter a publicly served asset"
+    )
+    assert "config.example.yaml" in literals, (
+        "the generator must take its names from the committed example config"
+    )
+
+
+def test_the_shipped_topology_names_no_tenant_resource():
+    """A resource hostname identifies a tenant, and the GUID rule cannot see it.
+
+    One shipped in this asset — served without authentication — for weeks, because it holds no
+    8-4-4-4-12 run and matches no listed name. It is not written down here: a guard that spells
+    out the value it caught is the disclosure it was meant to prevent, so the rule matches the
+    *shape* (any label in front of an Azure service domain) and the offending value appears only
+    in the failure message, at the moment it is rejected.
+
+    Nothing in the app ever read that field: the endpoint it actually calls comes from
+    `VITE_FOUNDRY_ENDPOINT`, inlined at build time. A `<placeholder>` is the only accepted form,
+    so the field stays documented without naming anybody's resource.
+    """
+    text = GENERATED.read_text(encoding="utf-8")
+    concrete = [host for host in AZURE_HOST.findall(text) if "<" not in host]
+    assert not concrete, f"tenant resource named in a publicly served asset: {concrete}"
 
 
 def test_the_shipped_topology_carries_no_identifier(shipped):

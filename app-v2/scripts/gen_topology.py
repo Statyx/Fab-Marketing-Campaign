@@ -20,10 +20,12 @@ docstring says a picture that can disagree with what is deployed is worse than n
 So every node ships `deployed: false`, and the browser decides otherwise by asking the tenant
 (`services/topology.ts`). That is strictly stronger than V1, which believed a JSON file.
 
-`config.yaml` IS read, because names, connection names and the model deployment are what make
-the drawing legible, and they are not identifiers. `_strip_guids()` is the structural backstop:
-it rejects anything GUID-shaped whatever its source, in the same spirit as the repo's leak
-guard — match a shape, never a list of names.
+Names ARE read, because connection names and the model deployment are what make the drawing
+legible — but from `config.example.yaml`, the committed one, never from the operator's
+gitignored `config.yaml`. See `_load_config()`: reading the private file made this published
+artefact impossible to reproduce anywhere else, and put a real Foundry endpoint in a public
+bundle. `_strip_guids()` is the structural backstop: it rejects anything GUID-shaped whatever
+its source, in the same spirit as the repo's leak guard — match a shape, never a list of names.
 """
 from __future__ import annotations
 
@@ -47,14 +49,26 @@ GUID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-
 
 
 def _load_config() -> dict:
-    """Read config.yaml for the *names*, tolerating its absence.
+    """Read the *example* config for the names — never the operator's `src/config.yaml`.
 
-    A fresh clone has no `src/config.yaml` (gitignored). Returning {} then is correct rather
-    than fatal: `build_workflow()` falls back to the constants written in its own source, so
-    CI still produces a complete, honest diagram — the same one, minus the operator's chosen
-    connection names.
+    This file is committed, and a test asserts it equals what the generator produces today.
+    Reading the gitignored `config.yaml` broke both halves of that at once. The output could
+    only ever be reproduced on the one machine holding that file, so CI — which materialises
+    `config.example.yaml` instead — rebuilt a different tree and the comparison went red *by
+    construction*, not because anyone forgot to regenerate. Re-running the generator could not
+    fix it: it re-baked the same private values.
+
+    And those values were published. The artefact carried the operator's real Foundry project
+    endpoint into a bundle served without authentication, and `_strip_guids()` could not see
+    it — a resource hostname is not GUID-shaped. The repo learned this once already: a guard
+    must read the file that *ships*, not the one that is gitignored. Same mistake, one
+    directory over.
+
+    Reading the example makes the artefact reproducible from the repo alone and leaves only
+    placeholders in it. Nothing is lost on stage: ids, labels, layers, rows and hops come from
+    `workflow.py`, and the browser resolves what is actually deployed at runtime.
     """
-    path = ROOT / "src" / "config.yaml"
+    path = ROOT / "src" / "config.example.yaml"
     if not path.exists():
         return {}
     try:

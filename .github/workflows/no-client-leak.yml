@@ -57,6 +57,12 @@ jobs:
       # The generator is pure numpy/pandas: no network, no credential, no capacity.
       - name: Generate the demo dataset
         run: python src/generate_data.py
+      # The voice-of-customer corpus lives under the same gitignored data/raw/ and is just as
+      # regenerable — pure stdlib, no network, no credential. It was left out when the corpus
+      # was introduced, which silently reintroduced exactly one skip the step below exists to
+      # forbid. A gate that tolerates "only one" stops being a gate.
+      - name: Generate the voice-of-customer corpus
+        run: python src/generate_voc_corpus.py
       - name: Run tests
         run: |
           set -o pipefail
