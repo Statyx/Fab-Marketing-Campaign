@@ -27,6 +27,58 @@ export interface AgentAnswer {
   raw: unknown;
 }
 
+/**
+ * A failed turn, in two registers.
+ *
+ * `message` is a sentence for the person in front of the screen; `detail` is the raw body for
+ * the fold underneath. Same split as the answers themselves — the reason it exists here too is
+ * that the app used to print `Foundry 400: {"error":{"message":"Agent task resp_0079… failed.
+ * Troubleshooting guide: https://learn.microsoft.com/…"}}` on stage.
+ */
+export class SupervisorError extends Error {
+  constructor(
+    message: string,
+    readonly detail: string,
+    readonly attempts: number,
+    readonly transient: boolean
+  ) {
+    super(message);
+    this.name = 'SupervisorError';
+  }
+}
+
+/** Error codes that mean "the hop died in flight", not "your request is malformed". */
+const TRANSIENT_CODES = ['tool_user_error', 'server_error', 'rate_limit_exceeded'];
+const TRANSIENT_STATUS = new Set([408, 409, 429, 500, 502, 503, 504]);
+
+/**
+ * Whether a failure is worth retrying.
+ *
+ * The interesting case is 400. A 400 normally means the caller is wrong and retrying is
+ * pointless — except that a subordinate dying mid-A2A is *also* reported as 400, with
+ * `"type":"invalid_request_error"` and `"code":"tool_user_error"`. So the type is useless here
+ * and the CODE is the only discriminator. Measured on the app's own "why does Black Friday
+ * Blast generate unsubscribes" suggestion: 4 successes and 1 `tool_user_error` in 5 identical
+ * runs, the failure landing at 110s while successes ran 98–157s — so it is not a wall-clock
+ * ceiling, and the same question genuinely answers on the next try.
+ */
+export function isTransient(status: number, body: string): boolean {
+  if (TRANSIENT_STATUS.has(status)) return true;
+  if (status !== 400) return false;
+  return TRANSIENT_CODES.some((c) => body.includes(c));
+}
+
+/** What to tell the user. Never the payload — that goes to `detail`. */
+export function humanMessage(status: number, body: string, attempts: number): string {
+  if (status === 401 || status === 403)
+    return "L’accès à l’agent a été refusé. La session a probablement expiré : rechargez la page pour vous reconnecter.";
+  if (isTransient(status, body))
+    return attempts > 1
+      ? `L’appel entre agents s’est interrompu ${attempts} fois de suite. C’est intermittent côté service : reposez la question.`
+      : "L’appel entre agents s’est interrompu en cours de route. C’est intermittent : reposez la question.";
+  return 'Le superviseur n’a pas pu traiter cette question.';
+}
+
 function agentUrl(agent: string): string {
   const base = endpoint?.replace(/\/$/, '');
   return `${base}/agents/${agent}/endpoint/protocols/openai/responses?api-version=v1`;
@@ -94,11 +146,12 @@ async function foundryList(path: string): Promise<{ name?: string; id?: string }
 export const listAgents = () => foundryList('/agents');
 export const listVectorStores = () => foundryList('/vector_stores');
 
-export async function askSupervisor(
+/** One HTTP attempt. Resolves with the answer, or throws a `SupervisorError`. */
+async function attemptOnce(
+  agent: string,
   question: string,
-  agent: string = supervisor
+  attempt: number
 ): Promise<AgentAnswer> {
-  if (!endpoint) throw new Error('VITE_FOUNDRY_ENDPOINT is not set.');
   const token = await getToken(FOUNDRY_SCOPES);
 
   const res = await fetch(agentUrl(agent), {
@@ -108,8 +161,75 @@ export async function askSupervisor(
   });
 
   const body = await res.text();
-  if (!res.ok) throw new Error(`Foundry ${res.status}: ${body.slice(0, 600)}`);
+  if (!res.ok) {
+    throw new SupervisorError(
+      humanMessage(res.status, body, attempt),
+      `Foundry ${res.status}: ${body.slice(0, 600)}`,
+      attempt,
+      isTransient(res.status, body)
+    );
+  }
 
   const json = JSON.parse(body);
   return { text: extractText(json), toolsFired: toolsFired(json), raw: json };
+}
+
+export interface AskOptions {
+  agent?: string;
+  /** How many HTTP attempts in total. Default 2 — see `isTransient`. */
+  attempts?: number;
+  /** Called before each attempt, so the caller can say "reprise" instead of spinning silently. */
+  onAttempt?: (attempt: number) => void;
+}
+
+/**
+ * Ask the supervisor, retrying a hop that died in flight.
+ *
+ * Two attempts, not more: a single answer to this question costs 98–157 seconds, so a third
+ * attempt could leave someone watching a spinner for six minutes — worse on stage than the
+ * failure it prevents. One retry takes the measured ~20% failure rate on the app's own
+ * suggested RCA question down to roughly 4%.
+ *
+ * `onAttempt` is not optional decoration. A silent four-minute wait reads as a crash, so the
+ * caller MUST surface the retry.
+ */
+export async function askSupervisor(
+  question: string,
+  opts: AskOptions = {}
+): Promise<AgentAnswer> {
+  if (!endpoint)
+    throw new SupervisorError(
+      'L’agent n’est pas configuré dans cette build.',
+      'VITE_FOUNDRY_ENDPOINT is not set.',
+      0,
+      false
+    );
+
+  const agent = opts.agent ?? supervisor;
+  const maxAttempts = Math.max(1, opts.attempts ?? 2);
+  let last: SupervisorError | null = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    opts.onAttempt?.(attempt);
+    try {
+      return await attemptOnce(agent, question, attempt);
+    } catch (e) {
+      // A network-level throw (DNS, dropped socket, CORS) carries no status, and is exactly
+      // the class of fault a second try clears. Treat it as transient.
+      last =
+        e instanceof SupervisorError
+          ? e
+          : new SupervisorError(
+              attempt > 1
+                ? `La connexion à l’agent a échoué ${attempt} fois de suite. Vérifiez le réseau, puis reposez la question.`
+                : 'La connexion à l’agent a échoué. Reposez la question.',
+              e instanceof Error ? e.message : String(e),
+              attempt,
+              true
+            );
+      if (!last.transient) break;
+    }
+  }
+
+  throw last as SupervisorError;
 }

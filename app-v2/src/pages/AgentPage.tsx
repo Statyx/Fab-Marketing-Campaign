@@ -28,7 +28,7 @@ import { Markdown } from '@/components/Markdown';
 import { PersonaPanels } from '@/components/PersonaPanels';
 import { personaByKey, type Source } from '@/data/personas';
 import { splitAnswer } from '@/services/answer';
-import { askSupervisor, foundryConfigured } from '@/services/foundry';
+import { askSupervisor, foundryConfigured, SupervisorError } from '@/services/foundry';
 
 interface Turn {
   id: number;
@@ -37,6 +37,7 @@ interface Turn {
   answer: string | null;
   toolsFired: string[];
   error: string | null;
+  detail: string | null;
   seconds: number;
 }
 
@@ -178,7 +179,41 @@ function Answer({ text, tools, seconds }: { text: string; tools: string[]; secon
   );
 }
 
-function Trace({ seconds }: { seconds: number }) {
+/**
+ * A failed turn, in the same two registers as an answer: a sentence, and the payload folded
+ * underneath. The app used to print the raw `Foundry 400: {...}` — id, error type and a
+ * Microsoft troubleshooting URL — straight onto the stage.
+ */
+function Failure({ message, detail, seconds }: { message: string; detail: string | null; seconds: number }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="rounded-2xl border border-red-300 bg-red-50 p-3.5 text-[0.8125rem] text-red-900 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-200">
+      <p className="font-medium">{message}</p>
+      <p className="mt-1 text-[11px] opacity-70">Abandonné après {seconds}s.</p>
+
+      {detail && (
+        <div className="mt-2.5">
+          <button
+            onClick={() => setOpen((v) => !v)}
+            aria-expanded={open}
+            className="inline-flex items-center gap-1.5 rounded-full bg-red-100 px-2.5 py-1 text-[11px] text-red-800 transition hover:opacity-80 dark:bg-red-900/40 dark:text-red-200"
+          >
+            <span aria-hidden>{open ? '▾' : '▸'}</span>
+            {open ? 'Masquer le détail technique' : 'Détail technique'}
+          </button>
+          {open && (
+            <div className="mt-2 overflow-x-auto rounded-xl bg-red-100/70 px-3 py-2 font-mono text-[11px] leading-relaxed break-words dark:bg-red-900/30">
+              {detail}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Trace({ seconds, attempt }: { seconds: number; attempt: number }) {
   const steps = [
     { label: 'Superviseur Foundry', detail: 'orchestration — ne recalcule rien', observed: true },
     { label: 'Appel A2A au sous-agent', detail: 'hop observé depuis le navigateur', observed: true },
@@ -195,6 +230,11 @@ function Trace({ seconds }: { seconds: number }) {
         <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-emerald-500" />
         Interrogation en cours — {seconds}s
       </div>
+      {attempt > 1 && (
+        <p className="mt-1.5 text-xs" style={{ color: 'var(--accent)' }}>
+          L’appel entre agents s’est interrompu — reprise automatique (tentative {attempt}).
+        </p>
+      )}
       <ol className="mt-3 space-y-2">
         {steps.map((s) => (
           <li key={s.label} className="flex items-start gap-2 text-xs">
@@ -213,7 +253,7 @@ function Trace({ seconds }: { seconds: number }) {
       </ol>
       <p className="mt-3 text-[11px]" style={{ color: 'var(--text-muted)' }}>
         Le routage se décide côté données : l’application ne recalcule aucun chiffre et ne choisit
-        aucune source. Comptez 40 à 60 secondes.
+        aucune source. Comptez une à deux minutes selon la question.
       </p>
     </div>
   );
@@ -227,6 +267,7 @@ export function AgentPage() {
   const [draft, setDraft] = useState('');
   const [pending, setPending] = useState(false);
   const [seconds, setSeconds] = useState(0);
+  const [attempt, setAttempt] = useState(1);
   const nextId = useRef(1);
   const bottom = useRef<HTMLDivElement>(null);
 
@@ -258,14 +299,24 @@ export function AgentPage() {
       const id = nextId.current++;
       setDraft('');
       setPending(true);
+      setAttempt(1);
       setTurns((t) => [
         ...t,
-        { id, question: q, expected, answer: null, toolsFired: [], error: null, seconds: 0 },
+        {
+          id,
+          question: q,
+          expected,
+          answer: null,
+          toolsFired: [],
+          error: null,
+          detail: null,
+          seconds: 0,
+        },
       ]);
 
       const started = Date.now();
       try {
-        const res = await askSupervisor(q);
+        const res = await askSupervisor(q, { onAttempt: setAttempt });
         const took = Math.round((Date.now() - started) / 1000);
         setTurns((t) =>
           t.map((x) =>
@@ -274,12 +325,14 @@ export function AgentPage() {
         );
       } catch (e) {
         const took = Math.round((Date.now() - started) / 1000);
+        const message =
+          e instanceof SupervisorError
+            ? e.message
+            : 'Le superviseur n’a pas pu traiter cette question.';
+        const detail =
+          e instanceof SupervisorError ? e.detail : e instanceof Error ? e.message : String(e);
         setTurns((t) =>
-          t.map((x) =>
-            x.id === id
-              ? { ...x, error: e instanceof Error ? e.message : String(e), seconds: took }
-              : x
-          )
+          t.map((x) => (x.id === id ? { ...x, error: message, detail, seconds: took } : x))
         );
       } finally {
         setPending(false);
@@ -412,16 +465,11 @@ export function AgentPage() {
                   <Answer text={t.answer} tools={t.toolsFired} seconds={t.seconds} />
                 )}
 
-                {t.error && (
-                  <div className="rounded-2xl border border-red-300 bg-red-50 p-4 text-sm text-red-800">
-                    <p className="font-medium">La question n’a pas abouti ({t.seconds}s).</p>
-                    <p className="mt-1 break-words font-mono text-xs">{t.error}</p>
-                  </div>
-                )}
+                {t.error && <Failure message={t.error} detail={t.detail} seconds={t.seconds} />}
               </div>
             ))}
 
-            {pending && <Trace seconds={seconds} />}
+            {pending && <Trace seconds={seconds} attempt={attempt} />}
             <div ref={bottom} />
           </div>
 
