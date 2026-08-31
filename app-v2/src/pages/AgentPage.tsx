@@ -29,6 +29,7 @@ import { PersonaPanels } from '@/components/PersonaPanels';
 import { personaByKey, pickVaried, type Source } from '@/data/personas';
 import { splitAnswer } from '@/services/answer';
 import { askSupervisor, foundryConfigured, SupervisorError } from '@/services/foundry';
+import { frozenAnswer, frozenDate, REPLAY_MS, type FrozenAnswer } from '@/services/frozen';
 
 interface Turn {
   id: number;
@@ -39,6 +40,10 @@ interface Turn {
   error: string | null;
   detail: string | null;
   seconds: number;
+  /** Set when the answer came from a recording rather than from a live call. Never omitted
+   *  silently: it drives the on-screen marker, and an undisclosed cache would present a stored
+   *  answer as a fresh one. */
+  frozen: FrozenAnswer | null;
 }
 
 /**
@@ -142,7 +147,17 @@ function RoutingBadges({ tools }: { tools: string[] }) {
  * The toggle is per turn, so opening the detail on one answer does not open it on every answer
  * in the thread — a shared flag would turn one click into a wall of identifiers.
  */
-function Answer({ text, tools, seconds }: { text: string; tools: string[]; seconds: number }) {
+function Answer({
+  text,
+  tools,
+  seconds,
+  frozen,
+}: {
+  text: string;
+  tools: string[];
+  seconds: number;
+  frozen: FrozenAnswer | null;
+}) {
   const [open, setOpen] = useState(false);
   const { body, source } = splitAnswer(text);
 
@@ -184,6 +199,17 @@ function Answer({ text, tools, seconds }: { text: string; tools: string[]; secon
         style={{ borderColor: 'var(--border)' }}
       >
         <RoutingBadges tools={tools} />
+        {frozen && (
+          // The duration shown is the one the LIVE agent took, not the replay delay. Printing
+          // "5s" would be a claim about the assistant's speed that nothing supports.
+          <span
+            className="rounded-full px-2 py-0.5 text-[10px]"
+            style={{ background: 'var(--accent-soft)', color: 'var(--accent)' }}
+            title={`Réponse capturée le ${frozenDate(frozen.capturedAt)} : l’assistant avait mis ${frozen.seconds}s. Restituée telle quelle pour la démonstration.`}
+          >
+            enregistrée le {frozenDate(frozen.capturedAt)}
+          </span>
+        )}
         <span className="ml-auto text-[10px]" style={{ color: 'var(--text-muted)' }}>
           {seconds}s
         </span>
@@ -226,7 +252,36 @@ function Failure({ message, detail, seconds }: { message: string; detail: string
   );
 }
 
-function Trace({ seconds, attempt }: { seconds: number; attempt: number }) {
+function Trace({
+  seconds,
+  attempt,
+  replay,
+}: {
+  seconds: number;
+  attempt: number;
+  replay: FrozenAnswer | null;
+}) {
+  // A replay is not an interrogation, so it does not borrow the wording of one. Showing the
+  // three steps here would animate work that is not happening, and "comptez une à deux minutes"
+  // would be absurd in front of a five-second pause.
+  if (replay) {
+    return (
+      <div className="glass rounded-xl p-4">
+        <div className="flex items-center gap-2 text-sm" style={{ color: 'var(--text-secondary)' }}>
+          <span
+            className="inline-block h-2 w-2 animate-pulse rounded-full"
+            style={{ background: 'var(--accent)' }}
+          />
+          Réponse enregistrée — restitution…
+        </div>
+        <p className="mt-1.5 text-xs" style={{ color: 'var(--text-muted)' }}>
+          Capturée le {frozenDate(replay.capturedAt)} — l’assistant avait mis {replay.seconds}s
+          pour la produire.
+        </p>
+      </div>
+    );
+  }
+
   // Plain French, and the third step stays honest. Only the assistant's own hops are observable
   // from the browser; what happens inside Fabric arrives with the result and is never watched
   // live. The muted dot and "non mesuré ici" carry that — dropping the jargon must not turn a
@@ -284,6 +339,7 @@ export function AgentPage() {
   const [pending, setPending] = useState(false);
   const [seconds, setSeconds] = useState(0);
   const [attempt, setAttempt] = useState(1);
+  const [replay, setReplay] = useState<FrozenAnswer | null>(null);
   const nextId = useRef(1);
   const bottom = useRef<HTMLDivElement>(null);
 
@@ -320,6 +376,9 @@ export function AgentPage() {
       setDraft('');
       setPending(true);
       setAttempt(1);
+      // Looked up before anything else, so a recorded question never reaches the network.
+      const cached = frozenAnswer(q);
+      setReplay(cached);
       setTurns((t) => [
         ...t,
         {
@@ -331,8 +390,33 @@ export function AgentPage() {
           error: null,
           detail: null,
           seconds: 0,
+          frozen: null,
         },
       ]);
+
+      // A recorded answer is revealed after a short pause rather than instantly: the pause is
+      // where the app says the answer is a recording, and an answer that appears the moment the
+      // button is pressed reads as a hardcoded string even when it is not.
+      if (cached) {
+        await new Promise((r) => setTimeout(r, REPLAY_MS));
+        setTurns((t) =>
+          t.map((x) =>
+            x.id === id
+              ? {
+                  ...x,
+                  answer: cached.text,
+                  toolsFired: cached.toolsFired,
+                  // The real duration, not the replay delay.
+                  seconds: cached.seconds,
+                  frozen: cached,
+                }
+              : x
+          )
+        );
+        setPending(false);
+        setReplay(null);
+        return;
+      }
 
       const started = Date.now();
       try {
@@ -492,14 +576,19 @@ export function AgentPage() {
                 </div>
 
                 {t.answer !== null && (
-                  <Answer text={t.answer} tools={t.toolsFired} seconds={t.seconds} />
+                  <Answer
+                    text={t.answer}
+                    tools={t.toolsFired}
+                    seconds={t.seconds}
+                    frozen={t.frozen}
+                  />
                 )}
 
                 {t.error && <Failure message={t.error} detail={t.detail} seconds={t.seconds} />}
               </div>
             ))}
 
-            {pending && <Trace seconds={seconds} attempt={attempt} />}
+            {pending && <Trace seconds={seconds} attempt={attempt} replay={replay} />}
             <div ref={bottom} />
           </div>
 

@@ -1,0 +1,143 @@
+{
+  "generatedBy": "scripts/freeze-questions.ts",
+  "entries": [
+    {
+      "persona": "direction",
+      "q": "Quelle part de la base client est à risque d'attrition ?",
+      "expects": "model",
+      "depth": 1
+    },
+    {
+      "persona": "direction",
+      "q": "Quels comptes B2B regroupent le plus de clients touchés par la campagne Black Friday Blast ?",
+      "expects": "ontology",
+      "depth": 1
+    },
+    {
+      "persona": "direction",
+      "q": "Combien de clients sont en risque élevé ou critique, et que reprochent-ils dans leurs verbatims ?",
+      "expects": "mixed",
+      "depth": 1
+    },
+    {
+      "persona": "direction",
+      "q": "Combien de valeur vie client est exposée au churn ?",
+      "expects": "model",
+      "depth": 2
+    },
+    {
+      "persona": "direction",
+      "q": "Que disent les clients mécontents, dans leurs propres mots ?",
+      "expects": "voc",
+      "depth": 2
+    },
+    {
+      "persona": "retention",
+      "q": "Combien de clients sont à risque et pour quelle valeur ?",
+      "expects": "model",
+      "depth": 1
+    },
+    {
+      "persona": "retention",
+      "q": "Quels comptes B2B concentrent le plus d interactions support négatives ?",
+      "expects": "ontology",
+      "depth": 1
+    },
+    {
+      "persona": "retention",
+      "q": "Quels clients en risque élevé rappeler en priorité, et quel motif ressort de leurs échanges ?",
+      "expects": "mixed",
+      "depth": 1
+    },
+    {
+      "persona": "retention",
+      "q": "Quels clients dois-je rappeler en priorité ?",
+      "expects": "model",
+      "depth": 2
+    },
+    {
+      "persona": "retention",
+      "q": "Quels clients à risque appartiennent au même compte B2B ?",
+      "expects": "ontology",
+      "depth": 2
+    },
+    {
+      "persona": "retention",
+      "q": "Sur quel ton les clients à risque écrivent-ils au support ?",
+      "expects": "voc",
+      "depth": 2
+    },
+    {
+      "persona": "marketing",
+      "q": "Quelle campagne envoie le plus d'emails par client ?",
+      "expects": "model",
+      "depth": 1
+    },
+    {
+      "persona": "marketing",
+      "q": "Quels segments la campagne Black Friday Blast ciblait-elle et quels segments a-t-elle réellement touchés ?",
+      "expects": "ontology",
+      "depth": 1
+    },
+    {
+      "persona": "marketing",
+      "q": "Combien de désabonnements, et quelle raison les clients invoquent-ils eux-mêmes ?",
+      "expects": "mixed",
+      "depth": 1
+    },
+    {
+      "persona": "marketing",
+      "q": "Pourquoi la campagne « Black Friday Blast » génère-t-elle autant de désabonnements ?",
+      "expects": "model",
+      "depth": 2
+    },
+    {
+      "persona": "marketing",
+      "q": "Quels objets d email ont été utilisés par la campagne Black Friday Blast ?",
+      "expects": "ontology",
+      "depth": 2
+    },
+    {
+      "persona": "marketing",
+      "q": "Que reprochent les clients qui reçoivent le plus d emails ?",
+      "expects": "voc",
+      "depth": 2
+    },
+    {
+      "persona": "commerce",
+      "q": "Quelle catégorie de produit génère le plus de chiffre d’affaires ?",
+      "expects": "model",
+      "depth": 1
+    },
+    {
+      "persona": "commerce",
+      "q": "Quels produits ont été achetés par les clients touchés par Black Friday Blast ?",
+      "expects": "ontology",
+      "depth": 1
+    },
+    {
+      "persona": "commerce",
+      "q": "Quels sont les motifs de retour, et comment les clients les formulent-ils ?",
+      "expects": "mixed",
+      "depth": 1
+    },
+    {
+      "persona": "commerce",
+      "q": "Quel est le panier moyen par canal de vente ?",
+      "expects": "model",
+      "depth": 2
+    },
+    {
+      "persona": "commerce",
+      "q": "Quelles catégories de produits les clients du segment High Value achètent-ils ?",
+      "expects": "ontology",
+      "depth": 2
+    },
+    {
+      "persona": "commerce",
+      "q": "Que disent les clients à propos du prix et de la qualité produit ?",
+      "expects": "voc",
+      "depth": 2
+    }
+  ]
+}

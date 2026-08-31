@@ -1,0 +1,240 @@
+{
+  "generatedBy": "src/capture_frozen_answers.py",
+  "answers": {
+    "Quelle part de la base client est à risque d'attrition ?": {
+      "persona": "direction",
+      "expects": "model",
+      "text": "## Réponse\n6,875 % de la base client est à risque d’attrition, en retenant la cohorte actionnable définie par un score d’attrition supérieur ou égal à 65.\n\n## Lecture\nC’est la part de clients profilés qui relève d’une action de rétention selon le seuil opérationnel retenu. Pris seul, ce chiffre indique la taille de la cible à traiter, pas si ce niveau est élevé ou faible.\n\n### SOURCE\nsemantic model: Fabric churn semantic layer\ntable: `crm_customer_profile`\ncolumn: `crm_customer_profile[churn_risk_score]`\nfilter/threshold: `churn_risk_score >= 65`\nmeasure evaluated: share of profiled customers at risk over all profiled customers by `customer_id`\nvalue returned: `0,06875` → `6,875 %` ; at-risk customers `825` ; total profiled customers `12 000`",
+      "toolsFired": [
+        "FrontDoorA2A"
+      ],
+      "seconds": 54.8,
+      "capturedAt": "2026-08-31T09:45:58Z"
+    },
+    "Quels comptes B2B regroupent le plus de clients touchés par la campagne Black Friday Blast ?": {
+      "persona": "direction",
+      "expects": "ontology",
+      "text": "## Réponse\nLes comptes B2B qui regroupent le plus de clients touchés par la campagne Black Friday Blast sont :\n\n- Garcia SARL – 8 clients touchés\n- Simon Partners – 7 clients touchés\n- Leroy SAS – 6 clients touchés\n- Durand SAS – 6 clients touchés\n- David Partners – 5 clients touchés\n- Durand SAS – 5 clients touchés\n- Lefebvre Group – 5 clients touchés\n- Thomas SAS – 5 clients touchés\n- Lefebvre Partners – 5 clients touchés\n- Michel Partners – 5 clients touchés\n\n## Lecture\nC’est la tête du classement des comptes B2B par clients distincts touchés au moins une fois par cette campagne. Ce résultat montre quels comptes concentrent le plus de contacts exposés ; il ne dit pas, à lui seul, si ces clients ont ouvert, cliqué ou commandé.\n\n### SOURCE\nsemantic model: Fabric marketing churn semantic layer\ntable: customers / accounts / campaign interactions\ncolumn: customer_type; campaign_name; account_id; account_name\nfilter: customer_type = 'B2B'; campaign_name = 'Black Friday Blast'; relation via CustomerBelongsToAccount and CampaignSentToCustomer\nmeasure: distinct customers touched per account, deduplicated at customer-account level, ranked descending, top 10\nvalue: Garcia SARL (ACC_000308) 8; Simon Partners (ACC_000083) 7; Leroy SAS (ACC_000067) 6; Durand SAS (ACC_000425) 6; David Partners (ACC_000048) 5; Durand SAS (ACC_000036) 5; Lefebvre Group (ACC_000747) 5; Thomas SAS (ACC_000538) 5; Lefebvre Partners (ACC_000110) 5; Michel Partners (ACC_000136) 5",
+      "toolsFired": [
+        "FrontDoorA2A"
+      ],
+      "seconds": 72.3,
+      "capturedAt": "2026-08-31T09:47:11Z"
+    },
+    "Combien de clients sont en risque élevé ou critique, et que reprochent-ils dans leurs verbatims ?": {
+      "persona": "direction",
+      "expects": "mixed",
+      "text": "## Réponse\n825 clients sont dans la cohorte actionnable de risque de churn, c’est-à-dire les clients profilés classés en risque élevé ou critique.\n\n## Ce que disent les clients\nLe reproche dominant porte sur une pression de contact jugée excessive ; le thème proche est un parcours de support défaillant, perçu comme impersonnel et sans prise en charge.\n\n- **Thème dominant — sur-sollicitation / pression marketing**\n  - « *Je ne compte plus vos relances, elles arrivent sans arret. Cela me donne surtout envie de partir.* »\n  - « *Trop de messages tuent le message, chez vous c'est flagrant. Si cela continue je couperai le contact.* »\n\n- **Autre thème proche — support fragmenté, impersonnel, sans responsable**\n  - « *On m'a fait repeter mon probleme a chaque interlocuteur. Je comptais sur mieux de votre part.* »\n  - « *Les reponses recues sont manifestement automatiques.* »\n\n## Lecture\nLe volume mesuré concerne la cohorte sur laquelle une équipe rétention agirait en priorité. Pris à côté des verbatims, ce qui ressort n’est pas une cause unique mais un double signal : pression marketing ressentie comme intrusive, et expérience de support vécue comme déshumanisée. Ce chiffre seul ne dit pas quelle part de cette cohorte exprime chacun de ces reproches.\n\n### SOURCE\nsemantic model: Fabric churn semantic layer\ntable: `crm_customer_profile`\ncolumn: `risk_band`\nfilter: `crm_customer_profile[risk_band] IN {\"High\",\"Critical\"}`\nmeasure: `'crm_customer_profile'[Profiled Customers]`\nvalue: 825\n\ncorpus: Voice of Customer verbatim corpus",
+      "toolsFired": [
+        "FrontDoorA2A",
+        "VoiceOfCustomerA2A"
+      ],
+      "seconds": 89.2,
+      "capturedAt": "2026-08-31T09:48:41Z"
+    },
+    "Combien de valeur vie client est exposée au churn ?": {
+      "persona": "direction",
+      "expects": "model",
+      "text": "## Réponse\n\nLa valeur vie client exposée au churn est **154 866** pour les clients dans la cohorte actionnable de rétention, définie ici comme ceux au-dessus du seuil de score de churn et couvrant les bandes High et Critical.\n\n## Lecture\n\nC’est la valeur vie client portée par la population sur laquelle une équipe rétention agirait en priorité. À elle seule, cette valeur ne dit pas si l’exposition est forte ou faible dans l’absolu, car il manque la valeur vie client totale de la base pour la situer.\n\n### SOURCE\nModèle sémantique: `SM_Marketing_Analytics`\nTable: `crm_customer_profile`\nColonne: `crm_customer_profile[churn_risk_score]`\nFiltre: `crm_customer_profile[churn_risk_score] >= 65 && crm_customer_profile[risk_band] IN {High, Critical}`\nMesure: `'crm_customer_profile'[Total CLV]`\nValeur: `154 866`",
+      "toolsFired": [
+        "FrontDoorA2A"
+      ],
+      "seconds": 60.4,
+      "capturedAt": "2026-08-31T09:49:42Z"
+    },
+    "Que disent les clients mécontents, dans leurs propres mots ?": {
+      "persona": "direction",
+      "expects": "voc",
+      "text": "## Réponse\nLes clients mécontents parlent surtout de **déception**, de **manque d’écoute** et d’**iniquité**, avec des mots comme « vexant », « refroidi », « sans réponse » ou « envie de partir ».\n\n## Ce que disent les clients\n- **Promotions jugées injustes pour les clients existants**  \n  « *Vos remises sont reservees aux nouveaux clients, c'est vexant. Cela m'a vraiment refroidi.* »  \n  D’autres l’expriment presque mot pour mot.\n\n- **Qualité produit perçue en baisse ou en dessous des attentes**  \n  « *Les finitions laissent vraiment a desirer. Cela m'a vraiment refroidi.* »\n\n- **Service client vécu comme répétitif et peu fluide**  \n  « *On m'a fait repeter mon probleme a chaque interlocuteur. Merci d'y remedier.* »\n\n- **Silence ou promesses non tenues dans le suivi**  \n  « *Ma demande est restee sans reponse. Cela m'a vraiment refroidi.* »\n\n- **Réponses perçues comme impersonnelles ou automatiques**  \n  « *Les reponses recues sont manifestement automatiques. Cela m'a vraiment refroidi.* »\n\n- **Pression marketing qui agace franchement**  \n  « *Je subis vos envois plus que je ne les lis. Si cela continue je couperai le contact.* »\n\n## Lecture\nLe point saillant n’est pas seulement le problème rencontré, mais le ressenti associé : les clients disent surtout qu’ils se sentent **peu considérés**, **mal suivis** ou **déçus par l’écart entre la promesse et l’expérience**. D’autres thèmes apparaissent aussi dans les verbatims, mais ceux-ci dominent l’expression du mécontentement.\n\n### SOURCE\ncorpus consulté: VoiceOfCustomerA2A verbatims",
+      "toolsFired": [
+        "VoiceOfCustomerA2A"
+      ],
+      "seconds": 30.7,
+      "capturedAt": "2026-08-31T09:50:14Z"
+    },
+    "Combien de clients sont à risque et pour quelle valeur ?": {
+      "persona": "retention",
+      "expects": "model",
+      "text": "## Réponse\n825 clients sont à risque, pour une valeur de 154 866 €.\n\n## Lecture\nC’est la cohorte actionnable la plus large pour la rétention: les clients acheteurs dont le risque de churn justifie une action prioritaire. La valeur donnée est la valeur future estimée en risque de perte pour cette cohorte, pas un chiffre sur les verbatims clients. Seul, ce chiffre ne dit pas si le niveau est élevé ou non par rapport au reste de la base.\n\n### SOURCE\nModèle: `SM_Marketing_Analytics`\nTable: `crm_customer_profile`\nColonne / seuil: `churn_risk_score >= 65`\nValeurs incluses: bandes `High`, `Critical`; clients acheteurs uniquement\nMesure: `[Customers at Risk]` = `825`\nMesure: `[CLV at Risk]` = `154 866 €`",
+      "toolsFired": [
+        "FrontDoorA2A"
+      ],
+      "seconds": 78.4,
+      "capturedAt": "2026-08-31T09:51:33Z"
+    },
+    "Quels comptes B2B concentrent le plus d interactions support négatives ?": {
+      "persona": "retention",
+      "expects": "ontology",
+      "text": "## Réponse\nLes comptes B2B qui concentrent le plus d’interactions support négatives, sur l’ensemble de l’historique disponible, sont en tête **Petit SAS (14)**, puis **Lefebvre Partners**, **Garcia SARL** et **Dubois Partners** (**13** chacun).\n\n## Données\n1. Petit SAS : 14 interactions négatives  \n2. Lefebvre Partners : 13  \n3. Garcia SARL : 13  \n4. Dubois Partners : 13  \n5. Bernard SARL : 12  \n6. Richard SARL : 12  \n7. David Partners : 12  \n8. Roux Partners : 12  \n9. Roux SARL : 11  \n10. Durand SAS : 11  \n\nLe classement ci-dessus est la tête d’une liste plus longue.\n\n## Lecture\nCe classement montre où la pression de support négatif est la plus visible en volume parmi les comptes B2B. En revanche, un volume seul ne dit pas si ces comptes sont aussi les plus risqués ou les plus stratégiques : il manque ici la valeur client et le niveau de risque de churn.\n\n### SOURCE\nsemantic model: Fabric semantic layer\ntable: Interaction\nfilter: customer_type = B2B; sentiment = 'negative'; all available dates\nmeasure: count of support interactions, ranked descending, top 20 accounts\nvalue: Petit SAS 14; Lefebvre Partners 13; Garcia SARL 13; Dubois Partners 13; Bernard SARL 12; Richard SARL 12; David Partners 12; Roux Partners 12; Roux SARL 11; Durand SAS 11",
+      "toolsFired": [
+        "FrontDoorA2A"
+      ],
+      "seconds": 63.6,
+      "capturedAt": "2026-08-31T09:52:37Z"
+    },
+    "Quels clients en risque élevé rappeler en priorité, et quel motif ressort de leurs échanges ?": {
+      "persona": "retention",
+      "expects": "mixed",
+      "text": "## Réponse\nÀ rappeler en priorité dans la cohorte actionnable de rétention : **10 clients**, classés par risque de churn décroissant puis par valeur client : **CUST_011321, CUST_000577, CUST_010486, CUST_010644, CUST_009296, CUST_005881, CUST_005652, CUST_008297, CUST_002645, CUST_008677**.\n\n## Données\n- **CUST_011321** — `churn_risk_score = 92` — `clv_eur = 185.81` — `days_since_last_order = 295`\n- **CUST_000577** — `churn_risk_score = 89` — `clv_eur = 118.32` — `days_since_last_order = 322`\n- **CUST_010486** — `churn_risk_score = 89` — `clv_eur = 45.64` — `days_since_last_order = 315`\n- **CUST_010644** — `churn_risk_score = 88` — `clv_eur = 192.61` — `days_since_last_order = 441`\n- **CUST_009296** — `churn_risk_score = 88` — `clv_eur = 157.40` — `days_since_last_order = 341`\n- **CUST_005881** — `churn_risk_score = 88` — `clv_eur = 98.49` — `days_since_last_order = 408`\n- **CUST_005652** — `churn_risk_score = 88` — `clv_eur = 42.11` — `days_since_last_order = 362`\n- **CUST_008297** — `churn_risk_score = 87` — `clv_eur = 12.39` — `days_since_last_order = 510`\n- **CUST_002645** — `churn_risk_score = 86` — `clv_eur = 329.31` — `days_since_last_order = 302`\n- **CUST_008677** — `churn_risk_score = 86` — `clv_eur = 217.32` — `days_since_last_order = 255`\n\n## Voix du client\nLe motif qui ressort dans leurs échanges est une **expérience de support fragmentée** : les clients disent devoir se répéter, ne pas sentir de prise en charge claire, et recevoir des réponses perçues comme peu humaines.\n\n- **CUST_010644** : « *On m'a fait repeter mon probleme a chaque interlocuteur. Cela m'a vraiment refroidi.* »\n- Thème proche relevé dans des échanges comparables : « *Impossible de joindre quelqu'un qui prenne le dossier en main. Je reste dans l'attente d'une reponse.* »\n- Autre formulation proche relevée dans des échanges comparables : « *Les reponses recues sont manifestement automatiques.* »\n\nJe précise que, dans les résultats retrouvés ici, la correspondance directe dans cette cohorte n’a été retrouvée que pour **CUST_010644** ; pour les autres identifiants listés, aucun verbatim direct n’a été retourné dans ce résultat.\n\n## Lecture\nLa priorité de rappel est donc une liste opérationnelle de clients déjà acheteurs, dans la cohorte actionnable de rétention. Côté motif, ce qui ressort n’est pas une cause chiffrée commune à toute la liste, mais un signal qualitatif clair : quand un verbatim est retrouvé, il pointe un défaut de continuité du support plutôt qu’un irritant produit isolé.\n\n### SOURCE\nsemantic model: Fabric churn semantic layer + ontology\ntable: customers\ncolumn: churn_risk_score; clv_eur; days_since_last_order; risk_band\nfilter: churn_risk_score >= 65 AND risk_band IN {High, Critical}; buyers only\nmeasure: top prioritized customers ordered by churn_risk_score desc then clv_eur\nvalue: CUST_011321, CUST_000577, CUST_010486, CUST_010644, CUST_009296, CUST_005881, CUST_005652, CUST_008297, CUST_002645, CUST_008677\ncorpus: voice-of-customer verbatims for listed customer IDs; direct match returned for CUST_010644 only",
+      "toolsFired": [
+        "FrontDoorA2A",
+        "VoiceOfCustomerA2A"
+      ],
+      "seconds": 103.0,
+      "capturedAt": "2026-08-31T09:54:21Z"
+    },
+    "Quels clients dois-je rappeler en priorité ?": {
+      "persona": "retention",
+      "expects": "model",
+      "text": "## Réponse\n\nÀ rappeler en priorité : les clients classés par risque de churn décroissant, tous en bande critique ; voici la tête de liste.\n\n1. `CUST_011321` — 92 ; Critical ; 185,81 € ; 295  \n2. `CUST_000577` — 89 ; Critical ; 118,32 € ; 322  \n3. `CUST_010486` — 89 ; Critical ; 45,64 € ; 315  \n4. `CUST_005652` — 88 ; Critical ; 42,11 € ; 362  \n5. `CUST_005881` — 88 ; Critical ; 98,49 € ; 408  \n6. `CUST_009296` — 88 ; Critical ; 157,40 € ; 341  \n7. `CUST_010644` — 88 ; Critical ; 192,61 € ; 441  \n8. `CUST_008297` — 87 ; Critical ; 12,39 € ; 510  \n9. `CUST_000375` — 86 ; Critical ; 113,61 € ; 298  \n10. `CUST_001324` — 86 ; Critical ; 30,76 € ; 319  \n\nLa liste affichée est la tête d’un classement plus long.\n\n## Lecture\n\nCette priorisation isole les cas les plus urgents à traiter tout de suite. Elle dit qui appeler d’abord ; elle ne dit pas encore pourquoi ces clients risquent de partir, ni quel script de rappel sera le plus efficace.\n\n### SOURCE\n- Semantic model: `SM_Marketing_Analytics`\n- Ranking field: `churn_risk_score`\n- Source identifier field: `customer_id`\n- Filter: `risk_band` = `Critical`\n- Values shown per record: `churn_risk_score`, `risk_band`, `clv_eur`, `days_since_last_order`",
+      "toolsFired": [
+        "FrontDoorA2A"
+      ],
+      "seconds": 56.3,
+      "capturedAt": "2026-08-31T09:55:18Z"
+    },
+    "Quels clients à risque appartiennent au même compte B2B ?": {
+      "persona": "retention",
+      "expects": "ontology",
+      "text": "## Réponse\nPlusieurs clients à risque appartiennent au même compte B2B, notamment chez Bertrand Partners et Robert SARL.\n\n## Données\n- Bertrand Partners : Gabriel Thomas ; Julie Michel\n- Robert SARL : Jules Richard ; Chloe Thomas\n- Durand Partners : Nathan David\n- Laurent Group : Paul Lefebvre\n- Lefebvre SAS : Gabriel Petit\n- Garcia Group : Camille Dubois\n\n## Lecture\nLe résultat montre bien des cas où le risque se concentre au niveau du compte B2B, mais la liste renvoyée est non exhaustive et tronquée, donc elle ne permet pas de conclure à l’ensemble complet des comptes concernés.\n\n### SOURCE\nsemantic model or ontology consulted: Fabric semantic layer\ntable: comptes B2B et clients liés\ncolumn: lifecycle_stage\nfilter or threshold applied: clients B2B en lifecycle_stage = at_risk ou churned ; interprétation de « à risque » comme cohorte actionnable\nmeasure evaluated: liste des clients à risque partageant un même compte B2B\nvalue it returned: résultat tronqué à 200 lignes ; non exhaustive",
+      "toolsFired": [
+        "FrontDoorA2A"
+      ],
+      "seconds": 64.8,
+      "capturedAt": "2026-08-31T09:56:24Z"
+    },
+    "Sur quel ton les clients à risque écrivent-ils au support ?": {
+      "persona": "retention",
+      "expects": "voc",
+      "text": "## Réponse\nLes clients à risque écrivent surtout sur un ton **déçu, blessé et exigeant**, plus souvent dans une **irritation froide et polie** que dans une colère ouverte.\n\n## Ce que disent les clients\nLe ton qui domine est celui de la **déception personnelle** et du **sentiment d’injustice**. Exemples :\n- « Je comptais sur mieux de votre part »\n- « Vos remises sont reservees aux nouveaux clients, c'est vexant »\n- « Cela m'a vraiment refroidi »\n\nLa forme reste souvent **polie malgré l’agacement**, avec des formulations du type :\n- « Bonjour, je me permets de vous ecrire… »\n- « Merci de votre retour »\n- « Je reste dans l’attente d’une reponse »\n\nOn voit aussi une **attente claire de correction rapide** :\n- « Merci d’y remedier »\n\n## Lecture\nLe risque ici ne s’exprime pas surtout par des messages agressifs, mais par un **refroidissement de la relation** : des clients encore mesurés dans la forme, mais déjà atteints dans la confiance. C’est un signal de fragilité relationnelle plus que d’explosion émotionnelle.\n\n### SOURCE\ncorpus: VoiceOfCustomerA2A verbatims",
+      "toolsFired": [
+        "VoiceOfCustomerA2A"
+      ],
+      "seconds": 27.5,
+      "capturedAt": "2026-08-31T09:56:52Z"
+    },
+    "Quelle campagne envoie le plus d'emails par client ?": {
+      "persona": "marketing",
+      "expects": "model",
+      "text": "## Réponse\n\nLa campagne qui envoie le plus d’emails par client est **Black Friday Blast** avec **3,90 emails par client**, sur l’ensemble des campagnes email, tous clients, sans filtre de date ni de segment.\n\n## Donnée mesurée\n\n**Black Friday Blast** est en tête du classement. Les autres campagnes du top retourné sont à **1,00 email par client**.\n\n## Lecture\n\nCela fait ressortir **Black Friday Blast** comme la seule campagne avec une pression email nettement plus élevée que le reste, dans le périmètre mesuré. En revanche, ce résultat ne dit rien à lui seul sur la cause ni sur la perception client.\n\n### SOURCE\nsemantic model: Fabric churn/marketing semantic layer\ntable: Campaigns\ncolumn: Channel\nfilter: Channel = email; all customers; no date filter; no segment filter\nmeasure: [Sends per Customer] = total campaign sends / distinct customers reached\nvalue: Black Friday Blast = 3,90; others in returned Top 20 = 1,00",
+      "toolsFired": [
+        "FrontDoorA2A"
+      ],
+      "seconds": 87.8,
+      "capturedAt": "2026-08-31T09:58:20Z"
+    },
+    "Quels segments la campagne Black Friday Blast ciblait-elle et quels segments a-t-elle réellement touchés ?": {
+      "persona": "marketing",
+      "expects": "ontology",
+      "text": "## Réponse\n\nLa campagne **Black Friday Blast** ciblait **High Value**, mais elle a réellement touché **At Risk**.\n\n## Lecture\n\nL’écart à retenir est que le segment visé et le segment effectivement atteint ne sont pas les mêmes. Cela signale un décalage d’exécution ou de rattachement dans les données de campagne, pas une mesure de volume.\n\n### SOURCE\nsemantic model / ontology consulted: campaigns, customers, segments\ntable: Campaign / CampaignSentToCustomer / Customer / CustomerInSegment / Segment\ncolumn: campaign_name, segment_id\nfilter: Campaign = \"Black Friday Blast\"\nmeasure evaluated: linked target segment; linked reached segment\nvalue returned: target = High Value (SEG_HIGH_VALUE); reached = At Risk (SEG_AT_RISK)",
+      "toolsFired": [
+        "FrontDoorA2A"
+      ],
+      "seconds": 55.6,
+      "capturedAt": "2026-08-31T09:59:17Z"
+    },
+    "Combien de désabonnements, et quelle raison les clients invoquent-ils eux-mêmes ?": {
+      "persona": "marketing",
+      "expects": "mixed",
+      "text": "## Réponse\n499 désabonnements sur l’ensemble du modèle disponible, tous clients et toutes campagnes confondus.\n\n## Ce que les données mesurent\nLe chiffre porte sur des événements de désabonnement email, sans filtre additionnel.\n\n## Ce que les clients disent\nLa raison dominante dans les verbatims est la **pression email jugée excessive** : trop de messages, des promotions envoyées « en rafale », et une demande de mieux choisir ce qu’ils reçoivent.\n\n> « le rythme de vos emails est franchement excessif »  \n> « trop de messages tuent le message, chez vous c'est flagrant »  \n> « Vos emails promotionnels arrivent en rafale »  \n> « J'aimerais pouvoir choisir ce que je recois. »\n\nD’autres verbatims retrouvés formulent la même lassitude et présentent le désabonnement comme une réaction de rejet.\n\n## Lecture\nLe volume mesuré dit qu’il y a un problème réel de désabonnement, et les verbatims l’attribuent surtout à la pression de contact plutôt qu’à un motif technique. Pris seul, ce chiffre ne dit pas quelle campagne ou quel segment porte le plus ce phénomène.\n\n### SOURCE\nModèle sémantique: `SM_Marketing_Analytics`\nTable: `'marketing_events'`\nColonne / mesure: `'marketing_events'[Unsubscribes]`\nFiltre appliqué: aucun — tous clients, toutes campagnes, tous canaux/e-mails présents dans le modèle\nValeur retournée: `499`\nCorpus verbatims consulté: corpus Voice of Customer",
+      "toolsFired": [
+        "FrontDoorA2A",
+        "VoiceOfCustomerA2A"
+      ],
+      "seconds": 76.6,
+      "capturedAt": "2026-08-31T10:00:34Z"
+    },
+    "Pourquoi la campagne « Black Friday Blast » génère-t-elle autant de désabonnements ?": {
+      "persona": "marketing",
+      "expects": "model",
+      "text": "## Réponse\nLa campagne « Black Friday Blast » est associée à un pic de désabonnements : 1,60 % parmi les clients touchés, contre 0,44 % pour les autres campagnes, avec un engagement plus faible sur cette même audience.\n\n## Données\nElle est aussi liée, dans les données relationnelles, à des clients exposés déjà en situation fragile ou passés en risque/churn après exposition. La réponse fournie signale notamment une audience de clients à risque touchée par la campagne, avec des trajectoires de désengagement visibles dans la cohorte exposée.\n\n## Voix des clients\nLe thème dominant est une **pression email perçue comme excessive et intrusive**.\n\n> « Vos emails promotionnels arrivent en rafale. Merci de lever le pied sur les envois. »\n\n> « Je recois beaucoup trop de messages de votre part en ce moment. Si cela continue je couperai le contact. »\n\nUn second thème ressort : la **fatigue face aux promotions répétées et au manque de contrôle sur ce qui est reçu**.\n\n> « Trop de messages tuent le message, chez vous c'est flagrant. J'aimerais pouvoir choisir ce que je recois. »\n\nJe n’ai trouvé dans les verbatims remontés aucune citation mentionnant explicitement « Black Friday Blast » ; les retours portent plus largement sur les campagnes promotionnelles et la pression email.\n\n## Lecture\nCe qui ressort, c’est moins une explication unique qu’un faisceau cohérent : la campagne cumule un niveau de désabonnement plus élevé, un engagement plus faible, et des retours clients qui parlent de saturation, d’agressivité et d’envie de couper le contact. Cela indique un problème de pression perçue sur une audience déjà fragile, pas à lui seul la part exacte de responsabilité du contenu créatif.\n\n### SOURCE\nsemantic model: SM_Marketing_Analytics\ntable: campaign performance / campaign = Black Friday Blast\nfilter: clients touchés par Black Friday Blast; comparaison avec autres campagnes\nmeasure: Unsubscribe Rate\nvalue: 1,60 % vs 0,44 %\n\nontology: ONT_Customer360\nrelation: Campaign → CampaignSentToCustomer → Customer\nfilter: campaign = Black Friday Blast; clients liés en at_risk / churned\nvalue: liens observés avec SEG_AT_RISK et clients exposés en trajectoire de désengagement\n\ncorpus: VoiceOfCustomer verbatims\n",
+      "toolsFired": [
+        "FrontDoorA2A",
+        "VoiceOfCustomerA2A"
+      ],
+      "seconds": 141.1,
+      "capturedAt": "2026-08-31T11:43:32Z"
+    },
+    "Quels objets d email ont été utilisés par la campagne Black Friday Blast ?": {
+      "persona": "marketing",
+      "expects": "ontology",
+      "text": "## Réponse\n3 objets d’e-mail ont été utilisés pour la campagne Black Friday Blast.\n\n- “Black Friday Blast - variante A”\n- “Black Friday Blast - variante B”\n- “Black Friday Blast - variante C”\n\n## Lecture\nLa campagne a utilisé des variantes d’objet, pas un objet unique.\n\n### SOURCE\nsemantic model: Fabric semantic layer\ncampaign: Black Friday Blast\nreturned count: 3\nrecords: ASSET_CAMP_007_A, ASSET_CAMP_007_B, ASSET_CAMP_007_C",
+      "toolsFired": [
+        "FrontDoorA2A"
+      ],
+      "seconds": 31.2,
+      "capturedAt": "2026-08-31T11:44:04Z"
+    },
+    "Que reprochent les clients qui reçoivent le plus d emails ?": {
+      "persona": "marketing",
+      "expects": "voc",
+      "text": "## Réponse\nLe reproche dominant est une **pression email jugée excessive et envahissante** ; ils demandent surtout **moins d’envois** ou **plus de contrôle** sur ce qu’ils reçoivent.\n\n## Ce que disent les clients\n- « le rythme de vos emails est franchement excessif »\n- « Vous m’écrivez bien trop souvent, c’est étouffant »\n- « je subis vos envois plus que je ne les lis »\n- « Trop de messages tuent le message »\n- « J’aimerais pouvoir choisir ce que je reçois »\n- « Cela me donne surtout envie de partir »\n\nUn second thème proche est la **fatigue qui finit par détruire l’attention** : à ce rythme, certains disent qu’ils ne liront plus rien du tout. D’autres thèmes ont été laissés de côté ici.\n\n## Lecture\nLe signal à retenir est qualitatif, pas quantifié ici : les clients ne décrivent pas seulement un volume d’emails trop élevé, mais une **pression marketing subie** et un **manque de maîtrise** sur la relation.\n\n### SOURCE\n- Corpus consulté: VoiceOfCustomerA2A verbatims",
+      "toolsFired": [
+        "VoiceOfCustomerA2A"
+      ],
+      "seconds": 25.4,
+      "capturedAt": "2026-08-31T11:44:30Z"
+    },
+    "Quelle catégorie de produit génère le plus de chiffre d’affaires ?": {
+      "persona": "commerce",
+      "expects": "model",
+      "text": "## Réponse\n\nSports génère le plus de chiffre d’affaires, avec 1 427,86 €.\n\n## Lecture\n\nC’est la catégorie qui arrive en tête sur le chiffre d’affaires des commandes. Pris seul, ce résultat donne le leader, mais pas l’écart avec les autres catégories.\n\n### SOURCE\nsemantic model: Fabric semantic layer\ntable: commandes / produits\ncolumn: catégorie de produit\nfilter: aucune\nmeasure: total du montant de commandes\nvalue: Sports — 1 427,86 €",
+      "toolsFired": [
+        "FrontDoorA2A"
+      ],
+      "seconds": 50.7,
+      "capturedAt": "2026-08-31T11:45:21Z"
+    },
+    "Quels produits ont été achetés par les clients touchés par Black Friday Blast ?": {
+      "persona": "commerce",
+      "expects": "ontology",
+      "text": "## Réponse\n\nLes clients touchés par **Black Friday Blast** ont acheté des produits des catégories **Beauty, Grocery, Fashion, Home, Sports et Electronics**.\n\n## Données\n\n- **Beauty** : *Beauty Item 111, 93, 94, 104, 112, 134, 140, 143, 54, 46, 25, 44…*\n- **Grocery** : *Grocery Item 114, 60, 51, 132, 148, 149, 124, 138, 16, 41, 65, 71, 75, 108, 121, 124, 125…*\n- **Fashion** : *Fashion Item 8, 14, 21, 30, 38, 61, 70, 73, 88, 89, 115, 118, 120, 130, 147, 150…*\n- **Home** : *Home Item 12, 15, 36, 37, 39, 52, 53, 67, 80, 99, 113…*\n- **Sports** : *Sports Item 5, 6, 9, 10, 20, 21, 22, 23, 28, 29, 59, 72, 74, 84, 85, 86, 90, 107, 109, 119, 122, 128, 129, 131, 133, 137, 141…*\n- **Electronics** : *Electronics Item 2, 7, 11, 35, 45, 50, 64, 79, 96, 100, 105, 106, 135, 142…*\n\n## Lecture\n\nCela montre une couverture d’achat très large après exposition à la campagne, sur plusieurs catégories. En revanche, la liste est tronquée et ne donne pas un inventaire complet de toutes les références achetées.\n\n### SOURCE\n- Semantic model / ontology consulted: campagne Black Friday Blast → clients touchés → commandes → produits\n- Table: campaign, customer, order, product\n- Column: product_id, product_name, category\n- Filter applied: clients touchés par Black Friday Blast (CAMP_007)\n- Measure evaluated: liste des produits achetés\n- Value returned: résultat cappé à 200 lignes; catégories = Beauty, Grocery, Fashion, Home, Sports, Electronics",
+      "toolsFired": [
+        "FrontDoorA2A"
+      ],
+      "seconds": 65.8,
+      "capturedAt": "2026-08-31T11:46:29Z"
+    },
+    "Quels sont les motifs de retour, et comment les clients les formulent-ils ?": {
+      "persona": "commerce",
+      "expects": "mixed",
+      "text": "## Réponse\nLes motifs de retour qui ressortent ici sont surtout des problèmes de taille, de conformité produit et de qualité perçue ; les clients les formulent avec un ton déçu, froid, et souvent accusateur.\n\n## Ce que disent les clients\n- **Taille incohérente selon les modèles** : “**Les tailles ne sont pas fiables d'un modele a l'autre**”. D’autres le formulent aussi avec une déception nette : “**Cela m'a vraiment refroidi**”.\n- **Produit non conforme à la description** : “**Le produit recu ne ressemble pas a la description**”.\n- **Qualité jugée en baisse ou insuffisante** : “**La qualite de vos articles n'est plus celle d'avant**”, “**Les finitions laissent vraiment a desirer**”, “**La matiere est decevante par rapport aux photos**”.\n- **Mauvaise expérience autour du traitement du retour** : “**Les reponses recues sont manifestement automatiques. Cela m'a vraiment refroidi**”, “**Je reste dans l'attente d'une reponse**”.\n\n## Lecture\nCe qui ressort surtout, c’est que le retour n’est pas formulé seulement comme un problème produit : il devient vite un reproche plus large sur la fiabilité de la marque et la qualité de la prise en charge. D’autres verbatims existent, mais ces thèmes dominent ici.\n\n### SOURCE\nCorpus consulté: VoiceOfCustomerA2A verbatims",
+      "toolsFired": [
+        "VoiceOfCustomerA2A"
+      ],
+      "seconds": 36.9,
+      "capturedAt": "2026-08-31T11:47:08Z"
+    },
+    "Quel est le panier moyen par canal de vente ?": {
+      "persona": "commerce",
+      "expects": "model",
+      "text": "## Réponse\n\nLe panier moyen par canal de vente est de 135,33 € sur l’app, 137,08 € en magasin et 135,47 € sur le web, sur la période du 01/06/2025 au 30/06/2026.\n\n## Lecture\n\nLe magasin est le canal avec le panier moyen le plus élevé sur cette période. L’écart entre canaux existe, mais à lui seul ce niveau ne dit pas ce qui le tire sans autre mesure de comparaison.\n\n### SOURCE\nModèle consulté: Fabric semantic layer\nTable: canal de vente\nColonne: canal de vente\nFiltre: période implicite du modèle du 01/06/2025 au 30/06/2026; type de client = All / Multiple; stade de cycle de vie = All / Multiple\nMesure: [Average Order Value]\nValeur: app 135,33 €; store 137,08 €; web 135,47 €",
+      "toolsFired": [
+        "FrontDoorA2A"
+      ],
+      "seconds": 65.9,
+      "capturedAt": "2026-08-31T11:48:16Z"
+    },
+    "Quelles catégories de produits les clients du segment High Value achètent-ils ?": {
+      "persona": "commerce",
+      "expects": "ontology",
+      "text": "## Réponse\nLes clients du segment **High Value** achètent principalement dans **Grocery, Home, Beauty, Fashion, Sports et Electronics**.\n\n## Lecture\nCela décrit les catégories effectivement reliées aux achats de ce segment, pas un classement de volume entre catégories. La réponse montre donc où ce segment achète, mais pas quelles catégories dominent en nombre de commandes ou en chiffre d’affaires.\n\n### SOURCE\nsemantic model: Fabric churn / marketing ontology\ntable: Segment → Customer → Order → Product\ncolumn: product category\nfilter: segment = High Value\nmeasure: catégories observées sur les achats\nvalue: Grocery, Home, Beauty, Fashion, Sports, Electronics",
+      "toolsFired": [
+        "FrontDoorA2A"
+      ],
+      "seconds": 39.9,
+      "capturedAt": "2026-08-31T11:48:58Z"
+    },
+    "Que disent les clients à propos du prix et de la qualité produit ?": {
+      "persona": "commerce",
+      "expects": "voc",
+      "text": "## Réponse\nLes clients disent surtout que le prix n’est plus perçu comme cohérent avec la qualité, et que la qualité produit déçoit parfois jusqu’à donner l’impression d’un produit non conforme.\n\n## Ce que disent les clients\n- **Rapport qualité-prix qui se dégrade**  \n  « Le rapport qualite prix s'est degrade. Cela m'a vraiment refroidi. »  \n  D’autres clients le formulent presque de la même manière.\n\n- **Prix jugés trop élevés ou difficiles à justifier**  \n  « Je trouve vos prix difficiles a justifier aujourd'hui. »  \n  « J'ai trouve le meme article bien moins cher ailleurs. »\n\n- **Qualité produit mise en cause via la non-conformité**  \n  « Le produit recu ne ressemble pas a la description. »  \n  D’autres verbatims reprennent ce même grief avec un ton de déception.\n\n- **Irritation sur la transparence prix**  \n  « Le prix affiche ne correspond pas a celui en caisse. »\n\n## Lecture\nLe point saillant est moins le prix seul que la rupture de confiance entre promesse, prix payé et qualité perçue. Les verbatims expriment surtout une déception nette, avec l’idée que le produit “ne vaut plus son prix” ou “ne correspond pas à ce qui était attendu”. D’autres thèmes peuvent exister, mais ce sont ceux qui dominent ici.\n\n### SOURCE\ncorpus: VoiceOfCustomerA2A verbatims",
+      "toolsFired": [
+        "VoiceOfCustomerA2A"
+      ],
+      "seconds": 35.7,
+      "capturedAt": "2026-08-31T11:50:26Z"
+    }
+  },
+  "capturedAt": "2026-08-31T11:50:26Z"
+}
