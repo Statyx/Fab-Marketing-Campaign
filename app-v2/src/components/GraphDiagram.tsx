@@ -39,7 +39,7 @@ export function GraphDiagram({
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="graph-svg w-full h-auto" role="img"
-         aria-label="Graphe de l’ontologie">
+         aria-label="Graphe des relations">
       <defs>
         <marker id="gArrow" viewBox="0 0 10 10" refX="26" refY="5" markerWidth="6"
                 markerHeight="6" orient="auto">

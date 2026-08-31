@@ -112,9 +112,9 @@ export function LandingPage() {
   // The badge dot reports the landing query, nothing more. V1's dot was decoration and always
   // green; a status light that cannot go out is not a status light.
   const health = loading
-    ? { color: '#94a3b8', text: 'connexion au modèle sémantique…' }
+    ? { color: '#94a3b8', text: 'connexion aux données…' }
     : failed
-      ? { color: '#f59e0b', text: 'modèle sémantique injoignable' }
+      ? { color: '#f59e0b', text: 'données injoignables' }
       : { color: '#22c55e', text: 'Customer 360 · Fabric' };
 
   return (
@@ -152,9 +152,9 @@ export function LandingPage() {
             className="mx-auto mt-4 max-w-2xl text-base leading-relaxed"
             style={{ color: 'var(--text-secondary)' }}
           >
-            Une vue unifiée du CRM, du marketing et du commerce. Quatre assistants interrogent le
-            même socle Fabric — modèle sémantique pour les chiffres, ontologie pour les relations —
-            et affichent la route réellement empruntée sous chaque réponse.
+            Une vue unifiée du CRM, du marketing et du commerce. Quatre assistants interrogent les
+            mêmes données Fabric — les chiffres d’un côté, les relations entre clients, campagnes
+            et commandes de l’autre — et indiquent sous chaque réponse ce qu’ils ont consulté.
           </p>
 
           {error && (
@@ -246,8 +246,8 @@ export function LandingPage() {
           </div>
 
           <p className="mt-3 text-xs" style={{ color: 'var(--text-muted)' }}>
-            Chaque assistant ouvre sur ses propres chiffres — mesures Direct Lake à gauche,
-            conversation à droite. Cliquer un chiffre pose la question au superviseur.
+            Chaque assistant ouvre sur ses propres chiffres — les indicateurs à gauche, la
+            conversation à droite. Cliquer un chiffre pose la question à l’assistant.
           </p>
         </section>
 
@@ -286,9 +286,7 @@ export function LandingPage() {
           className="portal-in portal-d4 border-t pt-4 text-center text-xs"
           style={{ borderColor: 'var(--border)', color: 'var(--text-muted)' }}
         >
-          Chiffres évalués par le modèle sémantique{' '}
-          <span className="font-mono">SM_Marketing_Analytics</span>. Lecture seule, aucun agrégat
-          recalculé côté application.
+          Customer 360 · données Microsoft Fabric
         </p>
       </div>
     </AppShell>

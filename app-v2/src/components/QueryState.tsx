@@ -26,7 +26,7 @@ export function QueryState({ loading, error, empty, onRetry, children }: Props) 
           className="h-4 w-4 animate-spin rounded-full border-2 border-t-transparent"
           style={{ borderColor: 'var(--accent)', borderTopColor: 'transparent' }}
         />
-        Interrogation du modèle sémantique…
+        Chargement des données…
       </div>
     );
   }

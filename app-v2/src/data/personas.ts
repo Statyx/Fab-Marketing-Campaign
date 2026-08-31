@@ -198,3 +198,41 @@ export const PERSONAS: Persona[] = [
 export function personaByKey(key: string | undefined): Persona | undefined {
   return PERSONAS.find((p) => p.key === key);
 }
+
+/**
+ * The order the starter questions should advertise the product in.
+ *
+ * A figure first — it is the fastest, the safest and it establishes that the numbers are real.
+ * Then the graph, which is the capability nothing else in the demo shows. Then the cross-source
+ * question, which is the only one neither subordinate could answer alone and therefore the only
+ * one that justifies a supervisor at all. `voc` closes the list: a persona short of one of the
+ * three above still gets a third chip rather than a hole.
+ */
+const FAMILY_ORDER: Source[] = ['model', 'ontology', 'mixed', 'voc'];
+
+/**
+ * Pick `n` suggestions spanning as many families as possible, in `FAMILY_ORDER`.
+ *
+ * Written because the cockpit capped its starters with `slice(0, n)` while this registry lists
+ * every persona's numeric questions first and its graph questions last. The two are individually
+ * reasonable and together they removed a whole capability from the product: no ontology question
+ * was reachable from any persona's openers, so the graph stopped being demonstrable and nothing
+ * failed to say so. A cap over an ordered list does not sample the list, it truncates it — if the
+ * order carries meaning, the cap inherits it.
+ *
+ * Falls back to registry order once every family is represented, so `n` chips are always returned
+ * when `n` suggestions exist.
+ */
+export function pickVaried(pool: Suggestion[], n: number): Suggestion[] {
+  const picked: Suggestion[] = [];
+  for (const family of FAMILY_ORDER) {
+    if (picked.length >= n) break;
+    const found = pool.find((s) => s.expects === family && !picked.includes(s));
+    if (found) picked.push(found);
+  }
+  for (const s of pool) {
+    if (picked.length >= n) break;
+    if (!picked.includes(s)) picked.push(s);
+  }
+  return picked;
+}

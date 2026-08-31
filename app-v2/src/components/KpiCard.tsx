@@ -1,9 +1,12 @@
 /**
- * A single figure, with the measure that produced it named underneath.
+ * A single figure. The measure that produced it is available on hover, not printed on its face.
  *
- * Showing the measure name is not decoration: every number on these screens is evaluated by
- * SM_Marketing_Analytics, and printing which measure it came from is what lets someone
- * reproduce it in Power BI instead of taking the app's word for it.
+ * It used to be printed — `[Customers at Risk]` in mono under every card — on the argument that
+ * naming the measure is what lets someone reproduce the figure in Power BI. That argument holds;
+ * the placement did not. Twenty cards each carrying an English identifier read as instrumentation
+ * on a screen shown to a marketing audience, and the app already has the right answer to this
+ * elsewhere: provenance is *available*, never *on stage* — the `SOURCE` fold under an answer, the
+ * technical detail behind a button on a failure. A `title` is that same fold at card size.
  *
  * Two changes when the arc screens were folded into the personas:
  *
@@ -32,7 +35,7 @@ const TONES: Record<NonNullable<Props['tone']>, string> = {
 
 export function KpiCard({ label, value, measure, hint, tone = 'default' }: Props) {
   return (
-    <div className="glass rounded-xl p-4">
+    <div className="glass rounded-xl p-4" title={`Mesure ${measure} — modèle sémantique`}>
       <p
         className="text-[0.625rem] font-semibold uppercase tracking-wide"
         style={{ color: 'var(--text-muted)' }}
@@ -47,12 +50,6 @@ export function KpiCard({ label, value, measure, hint, tone = 'default' }: Props
           {hint}
         </p>
       )}
-      <p
-        className="mt-2.5 border-t pt-1.5 font-mono text-[0.625rem]"
-        style={{ borderColor: 'var(--border)', color: 'var(--text-muted)' }}
-      >
-        {measure}
-      </p>
     </div>
   );
 }

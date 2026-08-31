@@ -26,7 +26,7 @@ import { useParams, Navigate } from 'react-router-dom';
 import { AppShell } from '@/components/AppShell';
 import { Markdown } from '@/components/Markdown';
 import { PersonaPanels } from '@/components/PersonaPanels';
-import { personaByKey, type Source } from '@/data/personas';
+import { personaByKey, pickVaried, type Source } from '@/data/personas';
 import { splitAnswer } from '@/services/answer';
 import { askSupervisor, foundryConfigured, SupervisorError } from '@/services/foundry';
 
@@ -50,12 +50,12 @@ interface Turn {
  */
 const SOURCE_STYLE: Record<Source, { label: string; icon: string; tint: string; ink: string }> = {
   model: {
-    label: 'Modèle sémantique · DAX',
+    label: 'Chiffres',
     icon: '📊',
     tint: 'rgba(124,92,230,0.12)',
     ink: 'var(--accent)',
   },
-  ontology: { label: 'Ontologie · graphe', icon: '🕸', tint: 'rgba(2,113,128,0.12)', ink: '#027180' },
+  ontology: { label: 'Graphe de relations', icon: '🕸', tint: 'rgba(2,113,128,0.12)', ink: '#027180' },
   voc: { label: 'Verbatims clients', icon: '💬', tint: 'rgba(137,102,16,0.14)', ink: '#7a5a0e' },
   mixed: {
     label: 'Chiffres + verbatims',
@@ -77,12 +77,25 @@ function SourceChip({ source }: { source: Source }) {
   );
 }
 
+/**
+ * The connection names the supervisor reports, in the words of the room.
+ *
+ * `FrontDoorA2A` and `VoiceOfCustomerA2A` are the identifiers of the two subordinate agents, and
+ * they were printed raw, in mono, under every answer. An unknown name still falls through
+ * verbatim: if a third subordinate is ever wired in, it must be *visible*, not silently relabelled
+ * into one of these two — the whole point of this badge is that it reports what happened.
+ */
+const TOOL_LABEL: Record<string, string> = {
+  FrontDoorA2A: 'Données Fabric',
+  VoiceOfCustomerA2A: 'Verbatims clients',
+};
+
 /** What the supervisor actually did, read off the response items. */
 function RoutingBadges({ tools }: { tools: string[] }) {
   if (tools.length === 0) {
     return (
       <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-800">
-        ⚠ réponse non sourcée — aucun sous-agent n’a été appelé
+        ⚠ réponse non sourcée — aucune donnée n’a été consultée
       </span>
     );
   }
@@ -93,22 +106,22 @@ function RoutingBadges({ tools }: { tools: string[] }) {
   return (
     <span className="flex flex-wrap items-center gap-1">
       <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-        Route réelle :
+        Source consultée :
       </span>
       {tools.map((t, i) => (
         <span
           key={`${t}-${i}`}
-          className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-mono text-[11px]"
+          className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px]"
           style={{ background: 'var(--accent-soft)', color: 'var(--accent)' }}
         >
-          {t}
+          {TOOL_LABEL[t] ?? t}
         </span>
       ))}
       {bothConsulted && (
         <span
           className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold"
           style={{ background: 'rgba(134,60,65,0.12)', color: '#863C41' }}
-          title="Les deux sous-agents ont répondu : la mise en regard est produite par le superviseur."
+          title="Les deux sources ont répondu : la mise en regard est produite par l’assistant."
         >
           🔀 synthèse de deux sources
         </span>
@@ -214,12 +227,16 @@ function Failure({ message, detail, seconds }: { message: string; detail: string
 }
 
 function Trace({ seconds, attempt }: { seconds: number; attempt: number }) {
+  // Plain French, and the third step stays honest. Only the assistant's own hops are observable
+  // from the browser; what happens inside Fabric arrives with the result and is never watched
+  // live. The muted dot and "non mesuré ici" carry that — dropping the jargon must not turn a
+  // declared step into an animated one.
   const steps = [
-    { label: 'Superviseur Foundry', detail: 'orchestration — ne recalcule rien', observed: true },
-    { label: 'Appel A2A au sous-agent', detail: 'hop observé depuis le navigateur', observed: true },
+    { label: 'L’assistant analyse la question', detail: 'il choisit les sources à interroger', observed: true },
+    { label: 'Interrogation des sources', detail: 'échange observé depuis l’application', observed: true },
     {
-      label: 'Fabric — data agent, puis DAX ou GQL',
-      detail: 'déclaré, non observé depuis l’application',
+      label: 'Calcul côté Fabric',
+      detail: 'annoncé par l’assistant, non mesuré ici',
       observed: false,
     },
   ];
@@ -232,7 +249,7 @@ function Trace({ seconds, attempt }: { seconds: number; attempt: number }) {
       </div>
       {attempt > 1 && (
         <p className="mt-1.5 text-xs" style={{ color: 'var(--accent)' }}>
-          L’appel entre agents s’est interrompu — reprise automatique (tentative {attempt}).
+          La liaison s’est interrompue — reprise automatique (tentative {attempt}).
         </p>
       )}
       <ol className="mt-3 space-y-2">
@@ -252,8 +269,7 @@ function Trace({ seconds, attempt }: { seconds: number; attempt: number }) {
         ))}
       </ol>
       <p className="mt-3 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-        Le routage se décide côté données : l’application ne recalcule aucun chiffre et ne choisit
-        aucune source. Comptez une à deux minutes selon la question.
+        Comptez une à deux minutes selon la question.
       </p>
     </div>
   );
@@ -290,7 +306,11 @@ export function AgentPage() {
   }, [turns, pending]);
 
   const send = useCallback(
-    async (question: string, expected: Source | null) => {
+    // `label` is what the conversation shows; `question` is what the agent receives. They differ
+    // when a chart click builds a prompt that names the table and the column — precision the
+    // answer depends on, jargon the room should never read. Free-typed questions pass through
+    // unchanged, so `label` defaults to the question itself.
+    async (question: string, expected: Source | null, label?: string) => {
       const q = question.trim();
       // One question at a time: all four personas sit on the same supervisor, and two in flight
       // would let the answers swap places.
@@ -304,7 +324,7 @@ export function AgentPage() {
         ...t,
         {
           id,
-          question: q,
+          question: label ?? q,
           expected,
           answer: null,
           toolsFired: [],
@@ -328,7 +348,7 @@ export function AgentPage() {
         const message =
           e instanceof SupervisorError
             ? e.message
-            : 'Le superviseur n’a pas pu traiter cette question.';
+            : 'L’assistant n’a pas pu traiter cette question.';
         const detail =
           e instanceof SupervisorError ? e.detail : e instanceof Error ? e.message : String(e);
         setTurns((t) =>
@@ -355,10 +375,18 @@ export function AgentPage() {
   // look like and wants to keep going. So the remaining suggestions stay, as compact chips above
   // the composer, minus the ones already asked (re-offering a question just answered reads as the
   // app not following its own conversation).
+  //
+  // Act three is the one that cost a capability. Cutting to three was done with `slice(0, 3)`,
+  // and the registry happens to list the numeric questions first and the graph ones last — so
+  // *every* ontology question in the product became unreachable in one edit, silently, and the
+  // graph simply stopped being demonstrable. Nothing failed; the openers just quietly became
+  // three variations of the same question. Pick one per family instead of the first three: a
+  // figure, then the graph, then the cross-source question only the supervisor can answer. When
+  // a cap and an ordering meet, the cap decides what the product appears to do.
   const asked = new Set(turns.map((t) => t.question));
   const unasked = persona.suggestions.filter((s) => !asked.has(s.q));
-  const starters = unasked.slice(0, 3);
-  const followUps = unasked.slice(0, 3);
+  const starters = pickVaried(unasked, 3);
+  const followUps = pickVaried(unasked, 3);
 
   return (
     <AppShell wide>
@@ -381,7 +409,9 @@ export function AgentPage() {
 
       {!foundryConfigured && (
         <p className="mt-4 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-          VITE_FOUNDRY_ENDPOINT n’est pas configuré : la conversation ne peut pas être envoyée.
+          L’assistant n’est pas configuré : la conversation ne peut pas être envoyée.
+          {/* The variable name stays reachable for whoever has to fix it, off the stage. */}
+          <span className="sr-only"> (VITE_FOUNDRY_ENDPOINT absent)</span>
         </p>
       )}
 
@@ -401,7 +431,7 @@ export function AgentPage() {
             // A click on a figure always produces a `mixed` question: the chart already holds the
             // number, so what is left to ask is the *why* — which forces both subordinates to fire
             // and is the only moment the supervisor is visibly supervising.
-            onAsk={(q) => void send(q, 'mixed')}
+            onAsk={(prompt, label) => void send(prompt, 'mixed', label)}
           />
         </section>
 
@@ -410,7 +440,7 @@ export function AgentPage() {
             className="mb-3 text-xs font-semibold uppercase tracking-wide"
             style={{ color: 'var(--text-muted)' }}
           >
-            Superviseur Foundry
+            Demandez à l’assistant
           </h2>
 
           <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
@@ -437,8 +467,8 @@ export function AgentPage() {
                   </button>
                 ))}
                 <p className="pt-1 text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-                  Le badge annonce la source <em>attendue</em>. La route réellement empruntée
-                  s’affiche sous la réponse — et peut différer.
+                  L’assistant choisit lui-même où chercher. La source réellement consultée
+                  s’affiche sous la réponse.
                 </p>
               </div>
             )}
@@ -501,7 +531,7 @@ export function AgentPage() {
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               disabled={pending}
-              placeholder="Nommez la table et la colonne…"
+              placeholder="Posez votre question…"
               className="glass min-w-0 flex-1 rounded-full px-4 py-2.5 text-[0.8125rem] outline-none disabled:opacity-60"
               style={{ color: 'var(--text-primary)' }}
             />

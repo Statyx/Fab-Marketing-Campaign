@@ -52,8 +52,23 @@ import {
 } from '@/services/queries';
 
 export interface PanelProps {
-  /** Sends a question to the supervisor. Wired by AgentPage; disabled while one is in flight. */
-  onAsk: (question: string) => void;
+  /**
+   * Asks the assistant. Two registers, deliberately.
+   *
+   * `prompt` is what reaches the agent, and it names the table and the column on purpose:
+   * "at risk" has three defensible readings in this model (`risk_band = 'High'` → 800,
+   * `churn_risk_score >= 65` → 825, `lifecycle_stage = 'at_risk'` → 593), and a question that
+   * does not disambiguate gets a different — equally correct — number each time it is asked.
+   *
+   * `label` is what the room reads. Sending only the precise prompt meant the audience saw
+   * *their own question* rendered as `Dans crm_customer_profile, les clients dont la colonne
+   * risk_band vaut "High"…`: the exact jargon this cleanup removes, in the one bubble the
+   * demo attributes to a human. Splitting the two keeps the precision where it is load-bearing
+   * and out of the place it embarrasses — same contract as the provenance fold under answers.
+   *
+   * Wired by AgentPage; disabled while one is in flight.
+   */
+  onAsk: (prompt: string, label: string) => void;
   busy: boolean;
 }
 
@@ -85,7 +100,7 @@ function PanelTitle({ children, note }: { children: string; note?: string }) {
 function AskHint() {
   return (
     <p className="mt-3 text-[0.6875rem]" style={{ color: 'var(--text-muted)' }}>
-      ↑ Cliquez une ligne : le chiffre part au superviseur, qui va chercher le pourquoi dans les
+      ↑ Cliquez une ligne : le chiffre part à l’assistant, qui va chercher le pourquoi dans les
       verbatims.
     </p>
   );
@@ -103,7 +118,7 @@ function RetentionPanels({ onAsk, busy }: PanelProps) {
   return (
     <div className="space-y-6">
       <section>
-        <PanelTitle note="Mesures évaluées par SM_Marketing_Analytics, en Direct Lake.">
+        <PanelTitle note="Qui est en risque, et ce que cela représente.">
           La cohorte à risque
         </PanelTitle>
         <QueryState loading={kpis.loading} error={kpis.error} onRetry={kpis.reload}>
@@ -139,7 +154,7 @@ function RetentionPanels({ onAsk, busy }: PanelProps) {
       </section>
 
       <section>
-        <PanelTitle note="crm_customer_profile — colonne risk_band.">
+        <PanelTitle note="Du risque critique au simple prospect.">
           Répartition par bande de risque
         </PanelTitle>
         <QueryState loading={bands.loading} error={bands.error} onRetry={bands.reload}>
@@ -153,7 +168,8 @@ function RetentionPanels({ onAsk, busy }: PanelProps) {
                   disabled={busy || prospect}
                   onClick={() =>
                     onAsk(
-                      `Dans crm_customer_profile, les clients dont la colonne risk_band vaut "${b.band}" sont ${fmtInt(b.customers)}. Que reprochent-ils dans leurs verbatims, et quelle action de rétention recommandes-tu ?`
+                      `Dans crm_customer_profile, les clients dont la colonne risk_band vaut "${b.band}" sont ${fmtInt(b.customers)}. Que reprochent-ils dans leurs verbatims, et quelle action de rétention recommandes-tu ?`,
+                      `Que reprochent les ${fmtInt(b.customers)} clients en risque « ${style.label} », et que faire ?`
                     )
                   }
                   className="block w-full rounded-lg px-2 py-1.5 text-left transition enabled:hover:bg-[var(--accent-soft)] disabled:cursor-default disabled:opacity-70"
@@ -221,7 +237,7 @@ function MarketingPanels({ onAsk, busy }: PanelProps) {
   return (
     <div className="space-y-6">
       <section>
-        <PanelTitle note="marketing_campaigns × marketing_events — envois par client et taux de désabonnement.">
+        <PanelTitle note="Envois par client et taux de désabonnement.">
           Pression e-mail par campagne
         </PanelTitle>
 
@@ -264,7 +280,8 @@ function MarketingPanels({ onAsk, busy }: PanelProps) {
                       onClick={() => {
                         if (busy) return;
                         onAsk(
-                          `La campagne « ${c.name} » envoie ${fmtDecShort(c.sendsPerCustomer)} messages par client contacté pour un taux de désabonnement de ${fmtPct(c.unsubscribeRate)} (marketing_events). Explique cet écart et cite ce que disent les clients qui l’ont reçue.`
+                          `La campagne « ${c.name} » envoie ${fmtDecShort(c.sendsPerCustomer)} messages par client contacté pour un taux de désabonnement de ${fmtPct(c.unsubscribeRate)} (marketing_events). Explique cet écart et cite ce que disent les clients qui l’ont reçue.`,
+                          `Pourquoi la campagne « ${c.name} » fait-elle partir ${fmtPct(c.unsubscribeRate)} des clients ?`
                         );
                       }}
                       className={`cursor-pointer border-t transition hover:bg-[var(--accent-soft)] ${busy ? 'pointer-events-none opacity-60' : ''}`}
@@ -334,7 +351,7 @@ function CommercePanels({ onAsk, busy }: PanelProps) {
   return (
     <div className="space-y-6">
       <section>
-        <PanelTitle note="Valeur exposée, telle que la calcule le modèle sémantique.">
+        <PanelTitle note="La valeur que représentent les clients qui partent.">
           Impact business
         </PanelTitle>
         <QueryState loading={kpis.loading} error={kpis.error} onRetry={kpis.reload}>
@@ -358,7 +375,7 @@ function CommercePanels({ onAsk, busy }: PanelProps) {
       </section>
 
       <section>
-        <PanelTitle note="crm_segments — part de la CLV à risque portée par chaque segment.">
+        <PanelTitle note="Part de la valeur à risque portée par chaque segment.">
           Exposition par segment
         </PanelTitle>
         <QueryState loading={segments.loading} error={segments.error} onRetry={segments.reload}>
@@ -382,7 +399,8 @@ function CommercePanels({ onAsk, busy }: PanelProps) {
                       onClick={() => {
                         if (busy) return;
                         onAsk(
-                          `Le segment « ${s.segment} » (crm_segments) porte ${fmtEur(s.clvAtRisk)} de CLV à risque sur ${fmtInt(s.atRisk)} clients. Qu’est-ce qui explique cette concentration, et que disent ces clients dans leurs verbatims ?`
+                          `Le segment « ${s.segment} » (crm_segments) porte ${fmtEur(s.clvAtRisk)} de CLV à risque sur ${fmtInt(s.atRisk)} clients. Qu’est-ce qui explique cette concentration, et que disent ces clients dans leurs verbatims ?`,
+                          `Pourquoi le segment « ${s.segment} » concentre-t-il ${fmtEur(s.clvAtRisk)} de valeur à risque ?`
                         );
                       }}
                       className={`cursor-pointer border-t transition hover:bg-[var(--accent-soft)] ${busy ? 'pointer-events-none opacity-60' : ''}`}
@@ -453,7 +471,7 @@ function DirectionPanels({ onAsk, busy }: PanelProps) {
   return (
     <div className="space-y-6">
       <section>
-        <PanelTitle note="Huit mesures du modèle sémantique, lues et non recalculées.">
+        <PanelTitle note="Valeur, exposition au départ et santé de la relation.">
           Le portefeuille en un écran
         </PanelTitle>
         <QueryState loading={kpis.loading} error={kpis.error} onRetry={kpis.reload}>
@@ -518,7 +536,8 @@ function DirectionPanels({ onAsk, busy }: PanelProps) {
                   disabled={busy || prospect}
                   onClick={() =>
                     onAsk(
-                      `Le portefeuille compte ${fmtInt(b.customers)} clients en risk_band "${b.band}" (crm_customer_profile), soit ${fmtEur(b.clv)} de CLV. Quel est l’enjeu pour la direction et sur quoi agir en priorité ?`
+                      `Le portefeuille compte ${fmtInt(b.customers)} clients en risk_band "${b.band}" (crm_customer_profile), soit ${fmtEur(b.clv)} de CLV. Quel est l’enjeu pour la direction et sur quoi agir en priorité ?`,
+                      `Quel est l’enjeu des ${fmtInt(b.customers)} clients en risque « ${style.label} », et par où commencer ?`
                     )
                   }
                   className="block w-full rounded-lg px-2 py-1.5 text-left transition enabled:hover:bg-[var(--accent-soft)] disabled:cursor-default disabled:opacity-70"

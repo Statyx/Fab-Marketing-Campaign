@@ -157,9 +157,7 @@ export function AppShell({
               className="mt-12 border-t pt-4 text-xs"
               style={{ borderColor: 'var(--border)', color: 'var(--text-muted)' }}
             >
-              Chiffres évalués par le modèle sémantique{' '}
-              <span className="font-mono">SM_Marketing_Analytics</span>. Lecture seule, aucun
-              agrégat recalculé côté application.
+              Customer 360 · données Microsoft Fabric
             </footer>
           )}
         </div>
