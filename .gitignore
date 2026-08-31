@@ -26,6 +26,13 @@ Thumbs.db
 # Committing 12k CSV rows + 1.5k text files would bloat every diff for zero benefit.
 data/raw/
 
+# Video capture working files (marketing/record_tour.py).
+# _auth.json holds live MSAL tokens for the signed-in operator; _capture/ and _frames/ are
+# intermediate renders. Only the finished mp4 is meant to be tracked.
+marketing/_auth.json
+marketing/_capture/
+marketing/_frames/
+
 # Supervision run logs -- contain live agent answers (real figures, real entity names).
 # Observations belong in the brain, redacted; raw answers do not belong in git.
 data/supervision/
