@@ -27,6 +27,7 @@ import { AppShell } from '@/components/AppShell';
 import { Markdown } from '@/components/Markdown';
 import { PersonaPanels } from '@/components/PersonaPanels';
 import { personaByKey, type Source } from '@/data/personas';
+import { splitAnswer } from '@/services/answer';
 import { askSupervisor, foundryConfigured } from '@/services/foundry';
 
 interface Turn {
@@ -112,6 +113,68 @@ function RoutingBadges({ tools }: { tools: string[] }) {
         </span>
       )}
     </span>
+  );
+}
+
+/**
+ * One answer bubble: the prose, then the provenance behind a button.
+ *
+ * The provenance is not decoration and is not being buried — it is the difference between a
+ * sourced figure and a chatbot that sounds sure of itself, and this app's whole argument rests
+ * on it. But printed inline it made the answer unreadable: identifiers in the lead sentence,
+ * then the same fields again as a bulleted form. It is one click away, closed by default,
+ * because a marketing lead reads the sentence and an architect asks for the query.
+ *
+ * The toggle is per turn, so opening the detail on one answer does not open it on every answer
+ * in the thread — a shared flag would turn one click into a wall of identifiers.
+ */
+function Answer({ text, tools, seconds }: { text: string; tools: string[]; seconds: number }) {
+  const [open, setOpen] = useState(false);
+  const { body, source } = splitAnswer(text);
+
+  return (
+    <div
+      className="glass rounded-2xl p-3.5 text-[0.8125rem] leading-relaxed"
+      style={{ color: 'var(--text-primary)' }}
+    >
+      <Markdown text={body} />
+
+      {source && (
+        <div className="mt-2.5">
+          <button
+            onClick={() => setOpen((v) => !v)}
+            aria-expanded={open}
+            className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] transition hover:opacity-80"
+            style={{ background: 'var(--accent-soft)', color: 'var(--accent)' }}
+          >
+            <span aria-hidden>{open ? '▾' : '▸'}</span>
+            {open ? 'Masquer le détail technique' : 'Source et requête'}
+          </button>
+          {open && (
+            <div
+              className="mt-2 overflow-x-auto rounded-xl px-3 py-2 font-mono text-[11px] leading-relaxed"
+              style={{ background: 'var(--surface-2, rgba(127,127,127,0.08))', color: 'var(--text-secondary)' }}
+            >
+              {source.split('\n').map((line, i) => (
+                <div key={i} className="whitespace-pre-wrap">
+                  {line}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      <div
+        className="mt-2.5 flex flex-wrap items-center gap-2 border-t pt-2.5"
+        style={{ borderColor: 'var(--border)' }}
+      >
+        <RoutingBadges tools={tools} />
+        <span className="ml-auto text-[10px]" style={{ color: 'var(--text-muted)' }}>
+          {seconds}s
+        </span>
+      </div>
+    </div>
   );
 }
 
@@ -346,21 +409,7 @@ export function AgentPage() {
                 </div>
 
                 {t.answer !== null && (
-                  <div
-                    className="glass rounded-2xl p-3.5 text-[0.8125rem] leading-relaxed"
-                    style={{ color: 'var(--text-primary)' }}
-                  >
-                    <Markdown text={t.answer} />
-                    <div
-                      className="mt-2.5 flex flex-wrap items-center gap-2 border-t pt-2.5"
-                      style={{ borderColor: 'var(--border)' }}
-                    >
-                      <RoutingBadges tools={t.toolsFired} />
-                      <span className="ml-auto text-[10px]" style={{ color: 'var(--text-muted)' }}>
-                        {t.seconds}s
-                      </span>
-                    </div>
-                  </div>
+                  <Answer text={t.answer} tools={t.toolsFired} seconds={t.seconds} />
                 )}
 
                 {t.error && (

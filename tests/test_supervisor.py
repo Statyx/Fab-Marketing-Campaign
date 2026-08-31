@@ -38,7 +38,7 @@ from deploy_supervisor_agent import (  # noqa: E402
     arm_a2a_connection_body, connection_arm_id, default_agent_card, ensure_incoming_a2a,
     parse_project_endpoint, supervisor_config, supervisor_instructions,
 )
-from verify_supervisor import _fired, _items, _routed, _tool_names, _types  # noqa: E402
+from verify_supervisor import _fired, _items, _routed, _split_source, _tool_names, _types  # noqa: E402
 
 TOOL = "FrontDoorA2A"
 VOC_TOOL = "VoiceOfCustomerA2A"
@@ -331,6 +331,208 @@ def test_the_lead_sentence_does_not_enumerate_the_list_below_it():
     by layout again, one level down from the provenance case that produced it."""
     assert "a lead sentence does not enumerate" in NORMALISED
     assert "the duplication rule broken by the layout a second time" in NORMALISED
+
+
+# --- two registers: the provenance moves out of the prose rather than being deleted ----------
+#
+# The relay contract says a figure travels with its scope, and the model applied that to the
+# sentence itself. Observed live, second turn of a demo: a lead reading "la part ... definie par
+# `crm_customer_profile[risk_band] IN {"High","Critical"}` ... est `crm_customer_profile[At Risk
+# %]`", then a six-bullet block naming the measure, the value, the filter, the threshold, the
+# denominator and the scope. True and sourced, and unreadable to the marketing lead it was for.
+#
+# Deleting the provenance was never an option -- it is the difference between this and a chatbot
+# that sounds confident. So it MOVES: prose in the body, identifiers in a trailing block behind
+# a fixed marker that the application splits on and folds behind a button.
+
+def test_the_body_of_the_answer_carries_no_identifier():
+    """The readability defect is in the SENTENCE, not in the bulleted block below it. Hiding the
+    block alone would have left a lead sentence still built out of table and column names."""
+    assert "the body of the reply" in NORMALISED
+    assert "contains no identifier of any kind" in NORMALISED
+    assert "name the population in the words the reader already uses" in NORMALISED
+
+
+@pytest.mark.parametrize("banned", [
+    "no table name", "no column name", "no measure name", "no dax or gql fragment",
+])
+def test_the_body_names_each_kind_of_identifier_it_excludes(banned):
+    """Naming the categories one at a time is what the model needs: told only 'no jargon' it
+    kept the bracketed field names, which it does not read as jargon."""
+    assert banned in NORMALISED
+
+
+def test_the_marker_is_fixed_ascii_and_never_translated():
+    """The application splits the reply on this line. A marker translated into the language of
+    the answer -- and every answer here is French -- silently stops matching, and the detail is
+    printed as prose again with nothing reporting that the contract broke."""
+    assert "`### source`" in NORMALISED
+    assert "that word, in capitals, in english, whatever language" in NORMALISED
+    assert "splits your reply on that line" in NORMALISED
+
+
+def test_the_scope_in_words_is_not_a_second_statement_of_provenance():
+    """Two rules would otherwise contradict each other: 'a number without its scope is not an
+    answer' and 'give the provenance in one place and nowhere else'. They are reconciled by
+    register, not by dropping either -- so the reconciliation is pinned."""
+    assert "the scope travels in two registers and they never mix" in NORMALISED
+    assert "that is not a statement of provenance" in NORMALISED
+    assert "the single statement of provenance that the duplication rule names" in NORMALISED
+
+
+def test_the_source_block_is_never_omitted():
+    """The application reads a missing block as an answer with no source, which is the same
+    signal it uses for a supervisor that called no subordinate at all. An omitted block would
+    therefore accuse a perfectly good answer of being ungrounded."""
+    assert "it is never omitted and never empty" in NORMALISED
+
+
+def test_the_source_block_is_outside_the_line_budget():
+    """The reply has a hard thirty-line budget. Counting the provenance against it would make
+    the model pay for the block by cutting the reading -- the one thing only it can produce."""
+    assert "the source block excluded" in NORMALISED
+    assert "that block is counted separately and is never what you cut" in NORMALISED
+
+
+def test_a_share_may_not_be_asked_for_under_its_own_filter():
+    """Observed live and reported as unusable: the supervisor asked for the at-risk SHARE while
+    also filtering to the at-risk bands, and relayed the answer -- the whole population, in the
+    cohort it had just selected. Arithmetically true, informationally empty, and on a demo it
+    reads as the model claiming the entire customer base is churning."""
+    assert "a share is not a count wearing a percent sign" in NORMALISED
+    assert "do not also apply the condition that defines it" in NORMALISED
+    assert "is the symptom of this mistake" in NORMALISED
+
+
+def test_a_share_is_given_once_in_one_unit():
+    """Observed on the live agent: `0,0784742699514886, soit 7,84742699514886 %` -- the same
+    figure twice, in two units, each carrying every decimal of the division. Every word of it
+    true; unreadable to the person it was written for."""
+    assert "one figure, one unit, once" in NORMALISED
+    assert "drop the tail" in NORMALISED
+
+
+def test_shortening_is_permitted_for_a_share_and_for_nothing_else():
+    """The narrow exception must stay narrow, or it swallows the rule that keeps 825 from
+    becoming 800 -- which is the defect this whole prompt was written against."""
+    assert "never round a figure" in NORMALISED          # the original rule, still standing
+    assert "the single place a figure may be shortened" in NORMALISED
+    assert "a count, a sum or an amount is relayed to its last digit" in NORMALISED
+
+
+def test_the_one_unit_rule_carries_no_figure_of_its_own():
+    from deploy_supervisor_agent import SUPERVISOR_INSTRUCTIONS_TEMPLATE as t
+    assert "0,07" not in t and "7,84" not in t
+
+
+def test_the_share_rule_carries_no_figure_of_its_own():
+    """The rule is about a percentage and the prompt may hold no digit -- the temptation to
+    write '100 %' here is exactly the hole `test_instructions_carry_no_figure` guards."""
+    assert "100" not in SUPERVISOR_INSTRUCTIONS_TEMPLATE
+    assert "the whole population is the symptom" in NORMALISED
+
+
+# --- the splitter: one contract, two implementations, and they must not drift ----------------
+#
+# `_split_source` here and `splitAnswer` in app-v2/src/services/answer.ts implement the same
+# rule in two languages. The table below is deliberately the same table the vitest suite uses,
+# so a change made on one side and forgotten on the other shows up as a red test rather than as
+# an answer folded into a collapsed panel on stage.
+#
+# The governing rule is asymmetric on purpose: the PROMPT is strict (`### SOURCE`, English,
+# capitals), the PARSER is tolerant. A marker that fails to match must never hide content.
+
+@pytest.mark.parametrize("marker", [
+    "### SOURCE", "SOURCE", "## Source", "**Source :**", "**Source:**", "### SOURCE :",
+    "#### source", "   ### SOURCE   ", "Sources",
+])
+def test_the_marker_is_recognised_however_it_was_dressed(marker):
+    """The first implementation was one regex and it missed `**Source :**` -- French typography
+    puts the colon INSIDE the bold markers. Decoration is stripped, not enumerated."""
+    body, block = _split_source(f"Réponse en clair.\n\n{marker}\nTable : t")
+    assert body == "Réponse en clair."
+    assert block == "Table : t"
+
+
+def test_an_answer_with_no_marker_stays_whole():
+    """The invariant that outranks the others: what the parser does not recognise stays
+    visible. A silent failure here hides an answer behind a button that was never clicked."""
+    plain = "Une réponse sans bloc technique."
+    assert _split_source(plain) == (plain, None)
+
+
+def test_the_split_takes_the_last_marker_not_the_first():
+    """'Source' is an ordinary French word. Splitting on the first occurrence would file the
+    whole answer as provenance and leave the reader a collapsed button where the answer was."""
+    body, block = _split_source("Selon la source\ninterrogée, c'est stable.\n\n### SOURCE\nTable : t")
+    assert "c'est stable" in body
+    assert block == "Table : t"
+
+
+def test_the_word_source_inside_a_sentence_is_not_a_marker():
+    text = "La source de cette mesure est le modèle sémantique, et rien d'autre."
+    assert _split_source(text) == (text, None)
+
+
+@pytest.mark.parametrize("malformed", [
+    "Réponse complète.\n\n### SOURCE\n",   # marker with nothing under it
+    "### SOURCE\nTable : t",               # marker with nothing above it
+])
+def test_a_malformed_block_never_empties_the_answer(malformed):
+    """Both shapes would otherwise render an empty panel or an empty answer. Neither is a thing
+    a reader can recover from, so the safe read is 'that was not the block'."""
+    body, block = _split_source(malformed)
+    assert block is None
+    assert body.strip() == malformed.strip()
+
+
+def test_the_prose_check_looks_at_the_body_not_the_whole_reply():
+    """The point of splitting inside the harness. Before it, 'the answer names the column'
+    passed identically whether the column sat in a readable trailing block or in the middle of
+    the lead sentence -- so the check could not see the defect that was reported."""
+    from verify_supervisor import QUERY_SHAPES
+    good = "Environ un acheteur sur treize.\n\n### SOURCE\nColonne : crm_customer_profile[risk_band]"
+    body, block = _split_source(good)
+    assert block is not None
+    assert not [s for s in QUERY_SHAPES if s in body.lower()]
+    # ... and the same identifiers in the prose must be caught.
+    bad = "La part definie par crm_customer_profile[risk_band] IN {\"High\"} est stable.\n\n### SOURCE\nx : y"
+    body, _ = _split_source(bad)
+    assert [s for s in QUERY_SHAPES if s in body.lower()]
+
+
+def test_a_bare_column_name_in_the_prose_is_a_leak_too():
+    """The first QUERY_SHAPES only held bracketed forms (`[churn_risk_score`), so the live reply
+    "825 clients acheteurs ont un churn_risk_score superieur ou egal au seuil" walked straight
+    past it -- while another check in the same run counted that very word as proof the scope had
+    survived. A column name is an identifier whether or not DAX punctuation came with it."""
+    from verify_supervisor import _registers
+    ok, detail = _registers("825 clients ont un churn_risk_score eleve.\n\n### SOURCE\nx : y")
+    assert not ok
+    assert "churn_risk_score" in detail
+
+
+def test_the_register_check_wants_the_block_present():
+    from verify_supervisor import _registers
+    ok, detail = _registers("Une reponse en clair, sans provenance nulle part.")
+    assert not ok
+    assert "MISSING" in detail
+
+
+def test_an_undigested_ratio_is_caught_wherever_it_sits():
+    """`0,0784742699514886` and `7,84742699514886 %` are the same defect in two units; the check
+    is on the digits, so it does not need to know which unit the model picked."""
+    from verify_supervisor import _registers
+    for figure in ("0,0784742699514886", "7,84742699514886 %", "0.0784742699514886"):
+        ok, detail = _registers(f"La part est de {figure}.\n\n### SOURCE\nx : y")
+        assert not ok, figure
+        assert "undigested float" in detail
+
+
+def test_a_readable_share_passes():
+    from verify_supervisor import _registers
+    ok, detail = _registers("Environ 7,8 % de la base, soit 825 acheteurs.\n\n### SOURCE\nx : y")
+    assert ok, detail
 
 
 def test_the_supervisor_may_not_end_a_turn_without_calling_a_subordinate():
