@@ -43,9 +43,12 @@ Three rules the code enforces rather than documents:
   correct answers (800 / 825 / 593) depending on the column read; an unscoped question is
   under-specified, not unstable.
 
-`/diagnostics` (outside the auth gate) runs a six-step connectivity proof: sign-in, Fabric
-token, cross-region item read, Foundry token, supervisor call, and a DAX round-trip that
-checks a measure and its underlying column against each other.
+`/diagnostics` runs a six-step connectivity proof: sign-in, Fabric token, cross-region item
+read, Foundry token, supervisor call, and a DAX round-trip that checks a measure and its
+underlying column against each other. **Nothing links to it** — it was a build-time
+instrument, and on a demo it sat beside `/architecture` at the same weight while saying
+nothing an audience wants. Type the URL. It is outside the auth gate on purpose, which is
+what lets it answer when sign-in itself is what failed.
 
 ## Getting started
 

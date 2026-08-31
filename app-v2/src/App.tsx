@@ -77,8 +77,13 @@ function App() {
             </AuthGuard>
           }
         />
-        {/* Outside the guard on purpose: a connectivity check that redirects away when
-            sign-in fails would hide the failure it exists to surface. */}
+        {/* Unlisted on purpose, and kept on purpose. No link points here any more: it proved a
+            custom SPA registration could obtain delegated Fabric and Foundry tokens in a browser,
+            which is settled, and on a demo it advertised a test instrument beside the page that
+            explains the product. But it is the only screen that reports *which* link in the chain
+            failed — and it is deliberately OUTSIDE the auth guard, so it still answers when
+            sign-in itself is what broke. Deleting it would mean a rebuild and a redeploy to get a
+            diagnosis back, at the exact moment there is no time for either. */}
         <Route path="/diagnostics" element={<DiagnosticsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

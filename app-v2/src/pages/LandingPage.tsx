@@ -7,8 +7,10 @@
  * never the problem, the staging was. So this page is centred in the viewport, the shell's nav
  * is suppressed (`<AppShell cover>`), and the sections fade in staggered.
  *
- * It is also a directory, not just a hero: every route the app owns is reachable from here —
- * four assistants and two platform screens. That is what makes it a portal rather than a splash.
+ * It is also a directory, not just a hero: every route the demo uses is reachable from here —
+ * four assistants and the architecture. That is what makes it a portal rather than a splash.
+ * `/diagnostics` is the one exception and it is deliberate: an unlisted route costs nothing on
+ * screen, and what it reports is of no interest to an audience.
  *
  * The guided arc that used to sit here (Détecter / Diagnostiquer / Quantifier / Agir) is gone.
  * It was a second navigation over the same subject: the four steps held every chart and no chat,
@@ -32,19 +34,20 @@ import { LANDING_DAX, mapLanding, type LandingStats } from '@/services/queries';
 
 const fr = new Intl.NumberFormat('fr-FR');
 
-/** The two screens that describe the platform itself rather than the business. */
+/**
+ * The one screen that describes the platform itself rather than the business.
+ *
+ * "Contrôle de connectivité" was the second entry here and has been taken out. It answered a
+ * question that mattered while the app was being wired — can a custom SPA registration obtain
+ * delegated Fabric and Foundry tokens in a browser — and that question is settled. On a portal
+ * cover it advertised a test instrument at the same weight as the architecture.
+ */
 const PLATFORM = [
   {
     to: '/architecture',
     icon: '🧩',
     label: 'Architecture',
     hint: 'La chaîne d’agents et l’ontologie, vérifiées dans le tenant',
-  },
-  {
-    to: '/diagnostics',
-    icon: '📡',
-    label: 'Contrôle de connectivité',
-    hint: 'Jetons, routes et temps de réponse',
   },
 ];
 

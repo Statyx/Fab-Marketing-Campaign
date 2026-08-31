@@ -108,8 +108,10 @@ export function AppShell({
           </div>
         </div>
 
-        {/* Secondary row: the two utility screens. The guided arc used to sit here as a second
-            navigation over the same four subjects — its charts now live inside the personas. */}
+        {/* Secondary row: Architecture, and nothing else. "Contrôle de connectivité" used to sit
+            here at the same weight, which put a test instrument beside the page that explains the
+            product. It was written to prove a custom Entra SPA could get delegated tokens from a
+            browser — a question that is now settled. Its route survives, unlisted (see App.tsx). */}
         {!cover && (
           <div className="border-t border-white/5">
             <div className="mx-auto flex max-w-[1400px] items-center gap-4 px-6 py-2">
@@ -122,16 +124,6 @@ export function AppShell({
                 }
               >
                 Architecture
-              </NavLink>
-              <NavLink
-                to="/diagnostics"
-                className={({ isActive }) =>
-                  `text-xs transition ${
-                    isActive ? 'text-slate-200' : 'text-slate-500 hover:text-slate-300'
-                  }`
-                }
-              >
-                Contrôle de connectivité
               </NavLink>
             </div>
           </div>
