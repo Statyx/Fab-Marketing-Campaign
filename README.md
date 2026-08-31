@@ -24,33 +24,12 @@ the hard-won traps in [`docs/ENGINEERING-NOTES.md`](docs/ENGINEERING-NOTES.md).
 
 ## Every month, customers leave — often in silence.
 
-![The cockpit](docs/images/teaser-opening.png)
+### ▶ [Watch the teaser (English)](marketing/teaser-c360-en.mp4) · [Version française](marketing/teaser-c360.mp4)
 
-Churn is the use case clients ask for most. It is also the one demos get wrong most often: a
-`churn_risk_score` column is generated at random, nobody checks it, and the whole story collapses
-the moment someone asks *"why is this customer at risk?"*.
-
-This project takes the opposite approach — and measures it. The generator simulates **behaviour
-first** (sends, opens, clicks, unsubscribes, orders, support tickets) and only then derives churn,
-CLV and lifecycle from that behaviour. Figures below come from the shipped dataset, buyers only,
-`seed=42`:
-
-| | Random-label approach | **This project** |
-|---|---|---|
-| Churn ↔ days since last order | \|r\| < 0.02 | **r = +0.84** |
-| Churn ↔ orders in last 90 d | \|r\| < 0.02 | **r = −0.56** |
-| Churn ↔ CLV | \|r\| < 0.02 | **r = −0.43** |
-| Churn ↔ engagement rate | \|r\| < 0.02 | **r = −0.39** |
-| Mean score: lapsed > 180 d vs recent buyers | flat | **59.1 vs 19.9** |
-| Mean score: unsubscribed vs subscribed | flat | **52.0 vs 28.6** |
-| Aggregates vs real orders | all zeros | computed, reconciled |
-| Enforced by tests | ✗ | ✅ 585 tests |
-
-The test suite fails the build if that stops being true — correlation floors, direction of effect,
-band coverage, and aggregates matching the transactional truth are all gated.
-
-🎬 Teaser: [`marketing/teaser-c360-en.mp4`](marketing/teaser-c360-en.mp4) (English) ·
-[`marketing/teaser-c360.mp4`](marketing/teaser-c360.mp4) (French)
+Churn demos usually draw `churn_risk_score` at random, and collapse the moment someone asks
+*"why is this customer at risk?"*. Here the generator simulates **behaviour first** — sends, opens,
+clicks, unsubscribes, orders, support tickets — and only then derives churn, CLV and lifecycle from
+it. The correlations that follow are [measured and gated](#the-churn-model), not asserted.
 
 ---
 
@@ -260,6 +239,22 @@ Demo arc: **detect** (who is at risk) → **diagnose** (why — which campaign) 
 
 Bands: **Low** 0-39 · **Medium** 40-64 · **High** 65-84 · **Critical** 85-100 · **Prospect** (never ordered).
 
+Because the score is derived rather than drawn, it correlates with the behaviour it claims to
+summarise. Measured on the shipped dataset, buyers only, `seed=42`:
+
+| | Random-label approach | **This project** |
+|---|---|---|
+| Churn ↔ days since last order | \|r\| < 0.02 | **r = +0.84** |
+| Churn ↔ orders in last 90 d | \|r\| < 0.02 | **r = −0.56** |
+| Churn ↔ CLV | \|r\| < 0.02 | **r = −0.43** |
+| Churn ↔ engagement rate | \|r\| < 0.02 | **r = −0.39** |
+| Mean score: lapsed > 180 d vs recent buyers | flat | **59.1 vs 19.9** |
+| Mean score: unsubscribed vs subscribed | flat | **52.0 vs 28.6** |
+| Aggregates vs real orders | all zeros | computed, reconciled |
+
+The test suite fails the build if that stops being true — correlation floors, direction of effect,
+band coverage, and aggregates matching the transactional truth are all gated.
+
 > Churn applies to **buyers only**. Someone who never ordered has a *conversion* problem, not a
 > churn problem — mixing the two fills the remediation budget with people who were never customers.
 
@@ -318,77 +313,6 @@ Storyline check
 > That 6.9 % is **825 of all 12 000 contacts**. The deployed model reports the same 825 as
 > **7.85 % of the 10 513 buyers**, because churn is scoped to buyers. Same numerator, different
 > denominator — the app labels which one it is showing, and so should you.
-
----
-
-## Status
-
-Everything below was deployed **and read back from the tenant**. Nothing here is claimed from a
-script's exit code alone.
-
-| Layer | Code | Deployed |
-|---|---|---|
-| Config-driven generator with real churn | ✅ | n/a |
-| Test gate (585 tests, fully offline) | ✅ | n/a |
-| Workspace + Lakehouse (15 CSV + 420 text files) | ✅ | ✅ `LH_Customer360` |
-| Delta tables + curated churn views (Spark notebook) | ✅ | ✅ `NB_Setup_Customer360` |
-| Semantic model (Direct Lake, 12 tables / 50 measures) | ✅ | ✅ `SM_Marketing_Analytics` |
-| Workspace task flow (6 tasks, generated + gated) | ✅ | ✅ imported |
-| Ontology + Graph (Customer 360) | ✅ | ✅ `ONT_Customer360` |
-| Power BI report (4 pages / 46 visuals) | ✅ | ✅ `RPT_Marketing_Churn`, 35/35 visual queries return data |
-| Portal (4 personas, embed + chat) | ✅ | ✅ running, chat verified end-to-end |
-| Dual-source Data Agent | ✅ | ✅ `Marketing_Churn_Agent` |
-| Foundry supervisor + 2 subordinates | ✅ | ✅ dual-source answers observed |
-
-How each ✅ was proven:
-
-- **Semantic model** — the definition is read back after every push and compared measure by
-  measure against what was sent (50/50 match).
-- **Report** — every measure and column referenced by its 46 visuals was resolved against the
-  live model via `executeQueries`; zero broken bindings. `validate_report.py` additionally
-  replays each visual's `prototypeQuery` in DAX: 35/35 return data, so none renders blank.
-- **Data Agent** — a readback confirms both datasources were accepted:
-  `ontology` → `ONT_Customer360`, `semantic_model` → `SM_Marketing_Analytics`.
-
-Live figures returned by the deployed model (not from the local CSVs):
-
-| Measure | Value |
-|---|---|
-| Total Customers | 12 000 |
-| Buyers | 10 513 |
-| Total Orders | 37 466 |
-| Revenue | 5 083 349.74 € |
-| Product Revenue | 5 083 349.74 € *(cross-check: order lines roll up to orders)* |
-| Average Order Value | 135.68 € |
-| Customers at Risk | 825 (7.85 % of buyers) |
-| Avg Churn Score | 29.51 |
-| Revenue at Risk | 235 196.07 € |
-| CLV at Risk | 154 865.60 € |
-| Total Sends | 72 799 |
-| Total Events | 17 557 |
-| Unsubscribed Customers | 499 |
-
-Risk bands are all populated and the lifecycle ordering is coherent
-(`at_risk` 71.5 > `churned` 64.3 > `active` 25.0, prospects unscored).
-
----
-
-## Public-repo hygiene
-
-This repo is public and the demo data is synthetic. Nothing tracked here may name a real
-customer, a real workspace owner, or a real Fabric item.
-
-```powershell
-python .github\scripts\check_client_leak.py     # exit 0 = clean
-```
-
-The guard **names nobody** — every rule matches a *shape*, not a name, because a public file
-enumerating a client portfolio would be a worse disclosure than the mention it was written to
-catch. It runs in CI on every branch and PR, and `tests/test_leak_guard.py` gates the guard
-itself: every rule has a detection test **and** a silence test.
-
-Full rule table, the reasoning behind the GUID allow-list, and why one exemption is scoped to a
-URL span rather than a line: [`docs/ENGINEERING-NOTES.md`](docs/ENGINEERING-NOTES.md#public-repo-hygiene).
 
 ---
 
