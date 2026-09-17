@@ -163,7 +163,7 @@ exposed) → act (suppress, throttle, win back).
 
 Direct Lake over the lakehouse SQL endpoint. 12 tables (the three pure-lineage tables —
 `crm_accounts`, `marketing_assets`, `marketing_audiences` — stay in the lakehouse and the
-ontology, out of the star schema), 11 relationships, 49 measures, `fr-FR` culture,
+ontology, out of the star schema), 12 relationships, 50 measures, `fr-FR` culture,
 `discourageImplicitMeasures = true`, plus a linguistic schema and verified answers for Copilot.
 
 ### Deploying it: never trust the 202

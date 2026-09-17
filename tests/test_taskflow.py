@@ -9,7 +9,7 @@ They enforce:
   - only task types Fabric accepts,
   - edges that reference real tasks, no self-loops, no duplicates, acyclic,
   - every task reachable (nothing floating off the canvas),
-  - the committed file stays in sync with config.yaml item names,
+  - the committed file stays in sync with the published example's item names,
   - the dual-source contract is visible: the Data Agent is fed by BOTH the semantic model
     and the graph.
 
@@ -17,7 +17,6 @@ Run with the rest of the gate:  python -m pytest tests/ -v --tb=short
 """
 import json
 import pathlib
-import subprocess
 import sys
 
 import pytest
@@ -29,7 +28,7 @@ FLOW_PATH = ROOT / "taskflow" / "marketing_taskflow.json"
 
 sys.path.insert(0, str(SRC))
 from build_taskflow import (TASK_TYPES, AGENT, MODEL, ONTOLOGY, INGEST,  # noqa: E402
-                           STEP_TO_TASK, STEPS_WITHOUT_ITEM)
+                           STEP_TO_TASK, STEPS_WITHOUT_ITEM, build)
 from deploy_all import STEP_NAMES  # noqa: E402
 
 
@@ -41,7 +40,7 @@ def flow():
 
 @pytest.fixture(scope="module")
 def cfg():
-    return yaml.safe_load((SRC / "config.yaml").read_text(encoding="utf-8"))
+    return yaml.safe_load((SRC / "config.example.yaml").read_text(encoding="utf-8"))
 
 
 # -- schema -------------------------------------------------------------------
@@ -168,8 +167,8 @@ def test_every_task_is_backed_by_a_deploy_step(flow):
     assert not unbacked, f"tasks with no deploy step behind them: {unbacked}"
 
 
-def test_committed_file_is_not_stale():
-    """Regenerating must be a no-op -- otherwise the committed file lies about config.yaml."""
-    r = subprocess.run([sys.executable, str(SRC / "build_taskflow.py"), "--check"],
-                       capture_output=True, text=True)
-    assert r.returncode == 0, r.stdout + r.stderr
+def test_committed_file_is_not_stale(cfg):
+    """A profile artifact is not the committed template being protected here."""
+    expected = json.dumps(build(cfg), indent=2, ensure_ascii=False) + "\n"
+    assert FLOW_PATH.read_text(encoding="utf-8") == expected, (
+        "The committed task flow no longer matches the published configuration")

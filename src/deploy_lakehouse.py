@@ -35,36 +35,41 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 import http.client
-import subprocess
+import time
 from pathlib import Path
 
 import requests
 from helpers import (load_config, load_state, save_state, get_fabric_token,
                      fabric_headers, find_item, poll_operation, print_step,
-                     ensure_tenant)
+                     ensure_tenant, get_resource_token, raw_dir, profile_dir)
 
 SRC = Path(__file__).parent
-RAW = SRC.parent / "data" / "raw"
+RAW = raw_dir()
 ONELAKE_HOST = "onelake.dfs.fabric.microsoft.com"
 DOMAINS = ["crm", "marketing", "commerce"]
 
 
 def storage_token() -> str:
-    out = subprocess.check_output(
-        ["az", "account", "get-access-token", "--resource", "https://storage.azure.com",
-         "--query", "accessToken", "-o", "tsv"], shell=True)
-    return out.decode().strip()
+    return get_resource_token("https://storage.azure.com")
 
 
 def _put(conn, hdr, path, data):
     """3-step DFS write: create -> append -> flush."""
     conn.request("PUT", path + "?resource=file", headers=hdr)
-    conn.getresponse().read()
+    response = conn.getresponse()
+    detail = response.read()
+    if response.status != 201:
+        raise RuntimeError(f"OneLake create failed ({response.status}) for {path}: {detail[:300]!r}")
     h2 = dict(hdr); h2["Content-Type"] = "application/octet-stream"
     conn.request("PATCH", path + "?action=append&position=0", body=data, headers=h2)
-    conn.getresponse().read()
+    response = conn.getresponse()
+    detail = response.read()
+    if response.status != 202:
+        raise RuntimeError(f"OneLake append failed ({response.status}) for {path}: {detail[:300]!r}")
     conn.request("PATCH", path + f"?action=flush&position={len(data)}", headers=hdr)
-    r = conn.getresponse(); r.read()
+    r = conn.getresponse(); detail = r.read()
+    if r.status != 200:
+        raise RuntimeError(f"OneLake flush failed ({r.status}) for {path}: {detail[:300]!r}")
     return r.status
 
 
@@ -143,6 +148,9 @@ def main():
             raise RuntimeError(f"Create Lakehouse failed ({r.status_code}): {r.text[:300]}")
         print(f"   created: {lh_id}")
 
+    if profile_dir():
+        state["lakehouse_id"] = lh_id
+        save_state(state)
     stok = storage_token()
 
     print_step(2, 4, "Upload CSVs to OneLake Files/raw/<domain>/")
@@ -152,8 +160,19 @@ def main():
     upload_text_corpus(ws, lh_id, stok)
 
     print_step(4, 4, "Persist state (+ SQL endpoint)")
-    det = requests.get(f"{api}/workspaces/{ws}/lakehouses/{lh_id}", headers=h, timeout=60).json()
-    sql = det.get("properties", {}).get("sqlEndpointProperties", {}).get("connectionString")
+    for attempt in range(20):
+        response = requests.get(f"{api}/workspaces/{ws}/lakehouses/{lh_id}", headers=h, timeout=60)
+        response.raise_for_status()
+        endpoint = response.json().get("properties", {}).get("sqlEndpointProperties", {})
+        sql = endpoint.get("connectionString")
+        if sql and endpoint.get("provisioningStatus") == "Success":
+            break
+        if endpoint.get("provisioningStatus") == "Failed":
+            raise RuntimeError("Lakehouse SQL endpoint provisioning failed")
+        if attempt < 19:
+            time.sleep(10)
+    else:
+        raise TimeoutError("Lakehouse SQL endpoint did not become ready")
     state["lakehouse_id"] = lh_id
     if sql:
         state["lakehouse_sql_endpoint"] = sql

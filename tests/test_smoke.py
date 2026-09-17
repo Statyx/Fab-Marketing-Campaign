@@ -24,8 +24,10 @@ import yaml
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SRC = ROOT / "src"
-RAW = ROOT / "data" / "raw"
 sys.path.insert(0, str(SRC))
+from helpers import load_config, raw_dir
+
+RAW = raw_dir()
 
 
 # ── Python compiles ─────────────────────────────────────────────
@@ -41,7 +43,7 @@ def test_python_compiles(py):
 # ── Config / state ──────────────────────────────────────────────
 @pytest.fixture(scope="module")
 def cfg():
-    return yaml.safe_load((SRC / "config.yaml").read_text(encoding="utf-8"))
+    return load_config()
 
 
 def test_config_has_required_keys(cfg):
@@ -1293,8 +1295,9 @@ def inspect_source(fn):
     return inspect.getsource(fn)
 
 
-def test_ensure_tenant_warns_instead_of_crashing_without_config(capsys):
+def test_ensure_tenant_warns_instead_of_crashing_without_config(capsys, monkeypatch):
     import helpers
+    monkeypatch.setattr(helpers, "profile_dir", lambda: None)
     helpers.ensure_tenant({})
     assert "az_subscription" in capsys.readouterr().out
 
@@ -2188,4 +2191,3 @@ def test_the_header_band_fits_the_title_and_the_subtitle_it_stacks():
     assert int(height.group(1)) >= need, (
         f"the header band is {height.group(1)}px but its title + subtitle need {need:.1f}px; "
         f"the browser will clip them and never warn")
-

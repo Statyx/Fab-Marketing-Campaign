@@ -46,8 +46,10 @@ from collections import Counter, defaultdict
 from datetime import date, timedelta
 from pathlib import Path
 
+from helpers import raw_dir
+
 REPO = Path(__file__).resolve().parents[1]
-RAW = REPO / "data" / "raw"
+RAW = raw_dir()
 OUT = RAW / "text" / "voice_of_customer"
 MANIFEST = OUT / "_manifest.json"
 

@@ -34,8 +34,9 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 import requests
+import time
 from helpers import (load_config, load_state, save_state, get_fabric_token,
-                     fabric_headers, poll_operation, print_step, ensure_tenant)
+                     fabric_headers, poll_operation, print_step, ensure_tenant, profile_dir)
 
 
 def main():
@@ -50,6 +51,9 @@ def main():
     r.raise_for_status()
     for w in r.json().get("value", []):
         if w.get("displayName") == name:
+            if profile_dir() and state.get("workspace_id") != w["id"]:
+                raise RuntimeError("A workspace with this name exists but is not owned by "
+                                   "the selected profile; refusing to adopt it")
             ws_id = w["id"]; print(f"   reusing: {ws_id}"); break
     if not ws_id:
         cr = requests.post(f"{api}/workspaces", headers=h,
@@ -68,6 +72,9 @@ def main():
             raise RuntimeError(f"Create workspace failed ({cr.status_code}): {cr.text[:400]}")
         print(f"   created: {ws_id}")
 
+    if profile_dir():
+        state["workspace_id"] = ws_id
+        save_state(state)
     print_step(2, 3, "Assign capacity")
     ac = requests.post(f"{api}/workspaces/{ws_id}/assignToCapacity", headers=h,
                        json={"capacityId": cap}, timeout=60)
@@ -76,7 +83,16 @@ def main():
     elif ac.status_code == 400 and "already" in ac.text.lower():
         print("   capacity already assigned")
     else:
-        print(f"   assignToCapacity -> {ac.status_code}: {ac.text[:200]}")
+        raise RuntimeError(f"assignToCapacity -> {ac.status_code}: {ac.text[:200]}")
+    for attempt in range(24):
+        current = requests.get(f"{api}/workspaces/{ws_id}", headers=h, timeout=60)
+        current.raise_for_status()
+        if current.json().get("capacityId") == cap:
+            break
+        if attempt < 23:
+            time.sleep(5)
+    else:
+        raise TimeoutError("Workspace did not become assigned to the requested capacity")
 
     print_step(3, 3, "Persist state")
     state["workspace_id"] = ws_id

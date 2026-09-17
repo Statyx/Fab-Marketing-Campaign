@@ -12,17 +12,18 @@ Write-Host ""
 $pythonOk = Get-Command python -ErrorAction SilentlyContinue
 if (-not $pythonOk) { Write-Host "ERROR: python not found in PATH" -ForegroundColor Red; exit 1 }
 
-# Preflight: the portal reads every ID from src/state.json, so a missing report_id
-# means a blank embed panel later. Fail here instead, with the fix.
-$statePath = Join-Path (Split-Path -Parent $root) "src\state.json"
-if (-not (Test-Path $statePath)) {
-    Write-Host "ERROR: src\state.json not found - run 'python deploy_all.py' first" -ForegroundColor Red
+# The Python helpers select the profile and reject cross-profile receipts without signing in.
+$srcPath = Join-Path (Split-Path -Parent $root) "src"
+$selectionJson = python -c "import json, sys; sys.path.insert(0, sys.argv[1]); from helpers import load_state, profile_dir, state_path; print(json.dumps(dict(state=load_state(), profile=str(profile_dir() or ''), path=str(state_path()))))" $srcPath
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "ERROR: could not read the selected deployment profile" -ForegroundColor Red
     exit 1
 }
-$state = Get-Content $statePath -Raw | ConvertFrom-Json
+$selection = $selectionJson | ConvertFrom-Json
+$state = $selection.state
 foreach ($k in @("workspace_id", "report_id", "data_agent_id")) {
     if (-not $state.$k) {
-        Write-Host "ERROR: '$k' missing from src\state.json - run 'python deploy_all.py'" -ForegroundColor Red
+        Write-Host "ERROR: '$k' missing from $($selection.path) - run 'python deploy_all.py'" -ForegroundColor Red
         exit 1
     }
 }
@@ -31,13 +32,23 @@ Write-Host "  report    : $($state.report_id)" -ForegroundColor DarkGray
 Write-Host "  data agent: $($state.data_agent_id)" -ForegroundColor DarkGray
 Write-Host ""
 
-# Auth: the backend uses AzureCliCredential, so 'az login' must already be done.
-$acct = az account show 2>$null | ConvertFrom-Json
-if (-not $acct) {
-    Write-Host "ERROR: not signed in - run 'az login' first" -ForegroundColor Red
-    exit 1
+# A profile uses the helpers' checked, isolated CLI identity; never fall back to the
+# operator's normal az cache. No-profile startup retains its original account check.
+if ($selection.profile) {
+    python -c 'import sys; sys.path.insert(0, sys.argv[1]); from helpers import ensure_tenant; ensure_tenant(quiet=True)' $srcPath
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "ERROR: isolated Azure CLI identity does not match the selected profile" -ForegroundColor Red
+        exit 1
+    }
+    Write-Host "  profile   : $($selection.profile)" -ForegroundColor DarkGray
+} else {
+    $acct = az account show 2>$null | ConvertFrom-Json
+    if (-not $acct) {
+        Write-Host "ERROR: not signed in - run 'az login' first" -ForegroundColor Red
+        exit 1
+    }
+    Write-Host "  signed in as $($acct.user.name)" -ForegroundColor DarkGray
 }
-Write-Host "  signed in as $($acct.user.name)" -ForegroundColor DarkGray
 Write-Host ""
 
 Write-Host "[1/2] Installing dependencies..." -ForegroundColor Yellow

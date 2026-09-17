@@ -36,14 +36,17 @@ _restore_path()
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-from pathlib import Path
+import base64
+import json
+import requests
 
 from helpers import (load_config, load_state, save_state, get_fabric_token, print_step,
-                     ensure_tenant)
-from notebook_utils import recreate_notebook, run_notebook
+                     ensure_tenant, raw_dir, profile_dir, find_item, fabric_headers,
+                     poll_operation, ItemNotFoundError)
+from notebook_utils import recreate_notebook, run_notebook, create_notebook, push_notebook
 
 NOTEBOOK_NAME = "NB_Setup_Customer360"
-RAW = Path(__file__).parent.parent / "data" / "raw"
+RAW = raw_dir()
 DOMAINS = ["crm", "marketing", "commerce"]
 
 
@@ -56,6 +59,77 @@ def discover_tables():
             for csv in sorted(folder.glob("*.csv")):
                 out.append((d, csv.stem))
     return out
+
+
+def notebook_binding(source):
+    lines, started = [], False
+    for line in source.splitlines():
+        if line.startswith("# META "):
+            lines.append(line.removeprefix("# META "))
+            started = True
+        elif started:
+            break
+    if not lines:
+        raise RuntimeError("Cannot verify existing notebook Lakehouse metadata")
+    metadata = json.loads("\n".join(lines))
+    return metadata.get("dependencies", {}).get("lakehouse", {})
+
+
+def verify_notebook_binding(cfg, state, notebook_id, token):
+    api, ws = cfg["fabric_api_base"], state["workspace_id"]
+    headers = fabric_headers(token)
+    response = requests.post(f"{api}/workspaces/{ws}/notebooks/{notebook_id}/getDefinition",
+                             headers=headers, timeout=120)
+    if response.status_code == 202:
+        operation = response.headers.get("x-ms-operation-id")
+        if not operation:
+            raise RuntimeError("Notebook definition operation has no operation ID")
+        poll_operation(token, api, operation)
+        response = requests.get(f"{api}/operations/{operation}/result", headers=headers, timeout=120)
+    response.raise_for_status()
+    parts = response.json().get("definition", {}).get("parts", [])
+    source = next((part for part in parts if part["path"] in
+                   ("notebook-content.py", "notebook-content.ipynb")), None)
+    if source is None:
+        raise RuntimeError("Existing notebook has no inspectable Fabric source; refusing to update it")
+    decoded = base64.b64decode(source["payload"]).decode("utf-8")
+    if source["path"].endswith(".py"):
+        binding = notebook_binding(decoded)
+    else:
+        metadata = json.loads(decoded).get("metadata", {})
+        bindings = [metadata.get(key, {}).get("lakehouse", {})
+                    for key in ("dependencies", "trident")]
+        bindings = [binding for binding in bindings if binding]
+        if not bindings or any(binding != bindings[0] for binding in bindings[1:]):
+            raise RuntimeError("Notebook Lakehouse metadata is missing or contradictory")
+        binding = bindings[0]
+    expected = {"default_lakehouse": state["lakehouse_id"],
+                "default_lakehouse_name": cfg["lakehouse_name"],
+                "default_lakehouse_workspace_id": ws}
+    if any(binding.get(key) != value for key, value in expected.items()):
+        raise RuntimeError("Existing notebook is bound to another Lakehouse or workspace")
+
+
+def ensure_setup_notebook(cfg, state, source, token):
+    ws = state["workspace_id"]
+    if profile_dir() is None:
+        return recreate_notebook(ws, NOTEBOOK_NAME, source, token)
+    try:
+        existing = find_item(token, cfg["fabric_api_base"], ws, NOTEBOOK_NAME, "Notebook")
+    except ItemNotFoundError as exc:
+        if state.get("notebook_setup_id"):
+            raise RuntimeError("Recorded setup notebook is missing; refusing to replace its identity") from exc
+        notebook_id = create_notebook(ws, NOTEBOOK_NAME, source, token)
+        state["notebook_setup_id"] = notebook_id
+        save_state(state)
+    else:
+        notebook_id = existing["id"]
+        if state.get("notebook_setup_id") != notebook_id:
+            raise RuntimeError("Existing setup notebook is not owned by this profile")
+        verify_notebook_binding(cfg, state, notebook_id, token)
+        push_notebook(ws, notebook_id, source, token)
+    verify_notebook_binding(cfg, state, notebook_id, token)
+    return notebook_id
 
 
 def build_notebook_py(ws_id, lh_id, lh_name, tables, at_risk_threshold, culprit):
@@ -88,7 +162,7 @@ created = []
 for domain, t in pairs:
     df = spark.read.csv(f"Files/raw/{{domain}}/{{t}}.csv", header=True, inferSchema=True)
     df.write.format("delta").mode("overwrite").option("overwriteSchema", "true").saveAsTable(t)
-    n = df.count()
+    n = spark.table(t).count()
     created.append((t, n))
     print(f"{{t}}: {{n}} rows")
 
@@ -168,7 +242,7 @@ def main():
     py = build_notebook_py(ws, lh, lh_name, tables,
                            cfg["churn_model"]["at_risk_threshold"],
                            cfg["storyline"]["culprit_campaign_id"])
-    nb_id = recreate_notebook(ws, NOTEBOOK_NAME, py, token)
+    nb_id = ensure_setup_notebook(cfg, state, py, token)
     print(f"   notebook_id = {nb_id}")
 
     print_step(2, 3, "Run notebook (Spark cold start ~60-90s)")

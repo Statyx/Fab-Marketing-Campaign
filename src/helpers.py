@@ -6,7 +6,9 @@ Reused from the proven sister-project pattern.
 """
 
 import base64
+import binascii
 import json
+import os
 import subprocess
 import sys
 import time
@@ -17,27 +19,193 @@ from typing import Any, Dict, Optional
 import requests
 
 SCRIPT_DIR = Path(__file__).parent
+ROOT = SCRIPT_DIR.parent
 CONFIG_FILE = SCRIPT_DIR / "config.yaml"
 STATE_FILE = SCRIPT_DIR / "state.json"
+ACTIVE_PROFILE_FILE = ROOT / "deployments" / "active-profile.json"
+PROFILE_ENV = "FAB_MARKETING_PROFILE_DIR"
+
+
+class ItemNotFoundError(RuntimeError):
+    pass
+
+
+def profile_dir() -> Optional[Path]:
+    selected = os.environ.get(PROFILE_ENV)
+    if selected is not None:
+        if not selected.strip():
+            raise RuntimeError(f"{PROFILE_ENV} is empty")
+        path = Path(selected)
+        if not path.is_absolute():
+            path = ROOT / path
+    elif ACTIVE_PROFILE_FILE.exists():
+        pointer = json.loads(ACTIVE_PROFILE_FILE.read_text(encoding="utf-8"))
+        name = pointer.get("profile") if isinstance(pointer, dict) else None
+        if (not isinstance(name, str) or not name.strip()
+                or name in (".", "..") or "/" in name or "\\" in name):
+            raise RuntimeError("active-profile.json must select one named deployment profile")
+        path = ACTIVE_PROFILE_FILE.parent / name
+    else:
+        return None
+    path = path.resolve()
+    if path == SCRIPT_DIR.resolve() or not (path / "config.yaml").is_file():
+        raise RuntimeError(f"Selected deployment profile has no separate config.yaml: {path}")
+    return path
+
+
+def config_path() -> Path:
+    profile = profile_dir()
+    return profile / "config.yaml" if profile else CONFIG_FILE
+
+
+def state_path() -> Path:
+    profile = profile_dir()
+    return profile / "state.json" if profile else STATE_FILE
+
+
+def raw_dir() -> Path:
+    profile = profile_dir()
+    return profile / "raw" if profile else ROOT / "data" / "raw"
+
+
+def output_path(default_path: Path, *profile_parts: str) -> Path:
+    profile = profile_dir()
+    if profile is None:
+        return Path(default_path)
+    relative = Path(*profile_parts)
+    if relative.is_absolute() or ".." in relative.parts:
+        raise ValueError("Profile output must stay inside its artifacts directory")
+    return profile / "artifacts" / relative
+
+
+def _profile_context(cfg: Dict[str, Any]) -> Dict[str, str]:
+    deployment = cfg.get("deployment", {})
+    context = {
+        "tenant_id": cfg.get("tenant_id"),
+        "subscription_id": cfg.get("az_subscription"),
+        "account": deployment.get("expected_account"),
+        "workspace_name": cfg.get("workspace_name"),
+    }
+    if any(not isinstance(value, str) or not value.strip() for value in context.values()):
+        raise RuntimeError("Profile requires tenant_id, az_subscription, workspace_name "
+                           "and deployment.expected_account")
+    return context
 
 
 def load_config() -> Dict[str, Any]:
-    with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+    with open(config_path(), "r", encoding="utf-8") as f:
+        cfg = yaml.safe_load(f)
+    if not isinstance(cfg, dict):
+        raise RuntimeError("Deployment configuration must be a YAML object")
+    return cfg
 
 
 def load_state() -> Dict[str, Any]:
     """Load deployment state (IDs created so far)."""
-    if STATE_FILE.exists():
-        with open(STATE_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {}
+    path = state_path()
+    if not path.exists():
+        return {}
+    with open(path, "r", encoding="utf-8") as f:
+        state = json.load(f)
+    if not isinstance(state, dict):
+        raise RuntimeError("Deployment state must be a JSON object")
+    if profile_dir() and state:
+        if state.get("_deployment_context") != _profile_context(load_config()):
+            raise RuntimeError("State does not belong to the selected deployment profile; "
+                               "do not copy old deployment IDs")
+    return state
 
 
 def save_state(state: Dict[str, Any]):
     """Persist deployment state."""
-    with open(STATE_FILE, "w", encoding="utf-8") as f:
+    path = state_path()
+    if profile_dir():
+        context = _profile_context(load_config())
+        if state.get("_deployment_context", context) != context:
+            raise RuntimeError("Refusing to save state from a different deployment profile")
+        state = dict(state, _deployment_context=context)
+        temporary = path.with_suffix(".json.tmp")
+        temporary.write_text(json.dumps(state, indent=2), encoding="utf-8")
+        temporary.replace(path)
+        return
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(state, f, indent=2)
+
+
+def _configure_profile_cli(cfg: Dict[str, Any]) -> Dict[str, str]:
+    context = _profile_context(cfg)
+    configured = cfg.get("deployment", {}).get("azure_config_dir")
+    if not isinstance(configured, str) or not configured.strip():
+        raise RuntimeError("Profile requires deployment.azure_config_dir for its isolated CLI cache")
+    cache = Path(os.path.expandvars(configured)).expanduser()
+    if not cache.is_absolute() or not cache.is_dir():
+        raise RuntimeError("The selected profile's isolated Azure CLI cache must already exist")
+    cache = cache.resolve()
+    if cache == (Path.home() / ".azure").resolve():
+        raise RuntimeError("A deployment profile cannot use the normal Azure CLI cache")
+    active = os.environ.get("AZURE_CONFIG_DIR")
+    if active and Path(active).expanduser().resolve() != cache:
+        raise RuntimeError("AZURE_CONFIG_DIR differs from the selected profile; "
+                           "use its dedicated shell, not another tenant's cache")
+    os.environ["AZURE_CONFIG_DIR"] = str(cache)
+    if cfg.get("fabric_api_base") != "https://api.fabric.microsoft.com/v1":
+        raise RuntimeError("Selected profile must use the public Fabric API endpoint")
+    return context
+
+
+def validate_token_identity(token: str, cfg: Optional[Dict[str, Any]] = None):
+    if profile_dir() is None:
+        return
+    context = _profile_context(cfg if cfg is not None else load_config())
+    try:
+        payload = token.split(".")[1]
+        claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+    except (IndexError, ValueError, UnicodeDecodeError, binascii.Error) as exc:
+        raise RuntimeError("Cannot verify the selected profile's token identity") from exc
+    if not isinstance(claims, dict):
+        raise RuntimeError("Token claims must be an object")
+    account = claims.get("upn") or claims.get("preferred_username") or claims.get("unique_name")
+    if (str(claims.get("tid", "")).casefold() != context["tenant_id"].casefold()
+            or str(account or "").casefold() != context["account"].casefold()):
+        raise RuntimeError("Access token does not belong to the selected tenant and user")
+
+
+def _validate_fabric_ownership(token: str):
+    if profile_dir() is None:
+        return
+    cfg, state = load_config(), load_state()
+    ws = state.get("workspace_id")
+    if not ws:
+        return
+    base = f"{cfg['fabric_api_base']}/workspaces/{ws}"
+    headers = fabric_headers(token)
+    response = requests.get(base, headers=headers, timeout=60)
+    response.raise_for_status()
+    if response.json().get("displayName") != cfg["workspace_name"]:
+        raise RuntimeError("Recorded workspace does not match the selected profile name")
+    expected = {
+        "lakehouse_id": ("Lakehouse", cfg["lakehouse_name"]),
+        "semantic_model_id": ("SemanticModel", cfg["semantic_model_name"]),
+        "report_id": ("Report", cfg["report_name"]),
+        "ontology_id": ("Ontology", cfg.get("ontology_name")),
+        "data_agent_id": ("DataAgent", cfg.get("data_agent_name")),
+        "notebook_setup_id": ("Notebook", "NB_Setup_Customer360"),
+        "graph_model_id": ("GraphModel", None),
+    }
+    for key, (kind, name) in expected.items():
+        if not state.get(key):
+            continue
+        item = requests.get(f"{base}/items/{state[key]}", headers=headers, timeout=60)
+        item.raise_for_status()
+        body = item.json()
+        if body.get("type") != kind or (name and body.get("displayName") != name):
+            raise RuntimeError(f"Recorded {key} does not match the selected profile's item")
+        if key == "graph_model_id":
+            suffix = state["ontology_id"]
+            expected_names = {f"{cfg['ontology_name']}_graph_{suffix}",
+                              f"{cfg['ontology_name']}_graph_{suffix.replace('-', '')}"}
+            if body.get("displayName") not in expected_names:
+                raise RuntimeError("Recorded graph is not the selected ontology's managed graph")
 
 
 def ensure_tenant(cfg: Optional[Dict[str, Any]] = None, quiet: bool = False):
@@ -52,6 +220,23 @@ def ensure_tenant(cfg: Optional[Dict[str, Any]] = None, quiet: bool = False):
     instead of identity; it once turned a healthy report into a fake 0/35.
     """
     cfg = cfg if cfg is not None else load_config()
+    if profile_dir() is not None:
+        context = _configure_profile_cli(cfg)
+        result = subprocess.run(
+            ["az", "account", "show", "--output", "json"],
+            shell=sys.platform == "win32", check=True, capture_output=True, text=True,
+            timeout=90,
+        )
+        account = json.loads(result.stdout)
+        if (str(account.get("tenantId", "")).casefold() != context["tenant_id"].casefold()
+                or str(account.get("id", "")).casefold() != context["subscription_id"].casefold()
+                or str(account.get("user", {}).get("name", "")).casefold()
+                != context["account"].casefold()):
+            raise RuntimeError("Isolated Azure CLI identity does not match the selected profile; "
+                               "no account was switched")
+        if not quiet:
+            print(f"OK  isolated tenant/account match profile '{profile_dir().name}'")
+        return
     sub = cfg.get("az_subscription")
     if not sub:
         print("!  No 'az_subscription' in config.yaml — ensure az is on the correct tenant "
@@ -67,15 +252,25 @@ def ensure_tenant(cfg: Optional[Dict[str, Any]] = None, quiet: bool = False):
         raise RuntimeError(f"Could not set az subscription '{sub}': {detail or e}")
 
 
-def get_fabric_token() -> str:
-    """Get Fabric API access token via Azure CLI."""
+def get_resource_token(resource: str) -> str:
+    if profile_dir():
+        ensure_tenant(quiet=True)
     result = subprocess.check_output(
         ["az", "account", "get-access-token",
-         "--resource", "https://api.fabric.microsoft.com",
+         "--resource", resource,
          "--query", "accessToken", "-o", "tsv"],
-        shell=True
+        shell=sys.platform == "win32", timeout=90,
     )
-    return result.decode().strip()
+    token = result.decode().strip()
+    validate_token_identity(token)
+    return token
+
+
+def get_fabric_token() -> str:
+    """Get a checked Fabric token and reject stale cross-profile item IDs."""
+    token = get_resource_token("https://api.fabric.microsoft.com")
+    _validate_fabric_ownership(token)
+    return token
 
 
 def get_powerbi_token() -> str:
@@ -84,13 +279,36 @@ def get_powerbi_token() -> str:
     The Fabric token does not work against api.powerbi.com — the refresh and
     DAX endpoints need the analysis.windows.net audience.
     """
-    result = subprocess.check_output(
-        ["az", "account", "get-access-token",
-         "--resource", "https://analysis.windows.net/powerbi/api",
-         "--query", "accessToken", "-o", "tsv"],
-        shell=True
-    )
-    return result.decode().strip()
+    if profile_dir():
+        get_fabric_token()
+    return get_resource_token("https://analysis.windows.net/powerbi/api")
+
+
+class _CheckedProfileCredential:
+    def __init__(self, credential):
+        self._credential = credential
+
+    def get_token(self, *scopes, **kwargs):
+        ensure_tenant(quiet=True)
+        token = self._credential.get_token(*scopes, **kwargs)
+        validate_token_identity(token.token)
+        return token
+
+    def close(self):
+        self._credential.close()
+
+
+def get_sdk_credential(*, process_timeout: int = 90):
+    if profile_dir() is None:
+        from azure.identity import DefaultAzureCredential
+        return DefaultAzureCredential(process_timeout=process_timeout)
+    from azure.identity import AzureCliCredential
+    cfg = load_config()
+    _configure_profile_cli(cfg)
+    return _CheckedProfileCredential(AzureCliCredential(
+        tenant_id=cfg["tenant_id"],
+        process_timeout=process_timeout,
+    ))
 
 
 def get_kusto_token(query_service_uri: str) -> str:
@@ -195,7 +413,7 @@ def find_item(token: str, api_base: str, workspace_id: str,
     for item in resp.json().get("value", []):
         if item.get("displayName") == display_name and item.get("type") == item_type:
             return item
-    raise RuntimeError(f"{item_type} '{display_name}' not found")
+    raise ItemNotFoundError(f"{item_type} '{display_name}' not found")
 
 
 def b64encode_json(obj: Any) -> str:

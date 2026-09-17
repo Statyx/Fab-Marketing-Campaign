@@ -786,12 +786,14 @@ def reframe_direct_lake(ws_id, sm_id):
     resp = requests.post(f"{base}/refreshes", headers=headers,
                          json={"type": "full"}, timeout=120)
     if resp.status_code not in (200, 202):
-        print(f"   WARNING: reframe could not be queued ({resp.status_code}): {resp.text[:200]}")
-        return
+        raise RuntimeError(f"Direct Lake reframe could not be queued ({resp.status_code}): "
+                           f"{resp.text[:200]}")
     print("   reframing Direct Lake...")
     for _ in range(60):
         time.sleep(5)
-        hist = requests.get(f"{base}/refreshes?$top=1", headers=headers, timeout=60).json()
+        response = requests.get(f"{base}/refreshes?$top=1", headers=headers, timeout=60)
+        response.raise_for_status()
+        hist = response.json()
         entries = hist.get("value") or []
         if not entries:
             continue
@@ -802,7 +804,7 @@ def reframe_direct_lake(ws_id, sm_id):
         if status in ("Failed", "Disabled"):
             raise RuntimeError(f"Direct Lake reframe {status}: "
                                f"{entries[0].get('serviceExceptionJson', '')[:300]}")
-    print("   WARNING: reframe still running after 5 min — check the workspace")
+    raise TimeoutError("Direct Lake reframe did not reach Completed")
 
 
 def main():
@@ -869,6 +871,8 @@ def main():
     else:
         raise RuntimeError(f"Deploy failed ({resp.status_code}): {resp.text[:400]}")
 
+    state["semantic_model_id"] = sm_id
+    save_state(state)
     verify_deployment(token, ws_id, sm_id, model_bim, repush=lambda: push(sm_id))
     reframe_direct_lake(ws_id, sm_id)
 

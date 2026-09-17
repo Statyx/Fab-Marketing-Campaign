@@ -57,10 +57,10 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import yaml
+from helpers import load_config, raw_dir
 
 SCRIPT_DIR = Path(__file__).parent
-RAW = SCRIPT_DIR.parent / "data" / "raw"
+RAW = raw_dir()
 SEED = 42
 
 # Basket shape — defined once so product pricing can be derived from the target AOV.
@@ -72,11 +72,6 @@ def _expected_units_per_order():
     lines = sum(v * w for v, w in zip(*LINES_PER_ORDER))
     qty = sum(v * w for v, w in zip(*QTY_PER_LINE))
     return lines * qty
-
-
-def load_config():
-    with open(SCRIPT_DIR / "config.yaml", "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
 
 
 def _rng(cfg):

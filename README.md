@@ -57,7 +57,7 @@ src/state.json                — deployment IDs (idempotent, gitignored)
 src/generate_data.py          — behaviour simulation, then derived churn
 src/helpers.py                — Fabric API auth, async polling, config/state, tenant guard
 src/deploy_all.py             — orchestrator (strict order, resumable, tenant-guarded)
-src/deploy_semantic_model.py  — Direct Lake model: 12 tables / 11 relationships / 50 measures
+src/deploy_semantic_model.py  — Direct Lake model: 12 tables / 12 relationships / 50 measures
 src/deploy_ontology.py        — 8 entities / 9 relationships (Fabric IQ)
 src/deploy_graph.py           — graph definition + RefreshGraph
 src/deploy_report.py          — Power BI report, 4 persona pages (legacy PBIX) + layout/field validators
@@ -293,6 +293,40 @@ python src\deploy_all.py
 
 Deploy order is strict: `workspace → lakehouse → setup notebook → semantic model → ontology →
 graph → report → data agent`.
+
+### Replaying in another tenant without replacing the original files
+
+Deployment profiles live in the gitignored `deployments/` directory. A profile contains its
+own `config.yaml`, `state.json`, and `raw/` snapshot. Its config keeps the existing business
+settings and declares `deployment.expected_account` and `deployment.azure_config_dir` for an
+already-authenticated, separate Azure CLI cache. Start its state empty: never copy item IDs
+from another deployment.
+
+Select a profile explicitly, or make it the local default with the ignored
+`deployments/active-profile.json` containing `{"profile":"new-tenant"}`:
+
+```powershell
+$env:FAB_MARKETING_PROFILE_DIR = Join-Path (Get-Location).Path 'deployments\new-tenant'
+# Set AZURE_CONFIG_DIR to this profile's dedicated cache, not the normal CLI cache.
+python -m pytest tests\ -v --tb=short
+if ($LASTEXITCODE -ne 0) { throw 'Deployment gate failed' }
+python src\deploy_all.py --skip generate_data --no-warmup
+```
+
+The explicit selector takes precedence over the active-profile file. A missing selected
+config, mismatched identity/cache, or state from a different profile stops the operation;
+it does not fall back to the original environment. Without either selector, the original
+`src/config.yaml`, `src/state.json`, and `data/raw/` paths remain the defaults.
+
+Reuse a byte-identical CSV/text snapshot for a replay. Regenerating the transactional data
+is a separate operation, not a prerequisite. Profile artifact outputs and supervision logs
+stay under its `artifacts/` directory. The setup notebook may only be updated when its saved
+ID and Lakehouse binding match; profile mode never implicitly deletes it.
+
+For the complete cockpit, the Fabric stages are followed by the existing Foundry front-door,
+VoC and supervisor scripts, then `app-v2`. Those surfaces also need their own target-tenant
+permissions, published data-agent endpoint, model deployment and browser application identity.
+An Azure CLI cache selection alone does not select Rayfin's separate login or app receipt.
 
 The Foundry supervision plane is deliberately **not** a `deploy_all.py` step — a Foundry agent is
 not a Fabric item. Deploy it separately with `src/deploy_supervisor_agent.py`; see

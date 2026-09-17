@@ -94,7 +94,7 @@ import re
 import sys
 from pathlib import Path
 
-from helpers import load_config, load_state, save_state, print_step
+from helpers import get_sdk_credential, load_config, load_state, save_state, print_step
 
 SCRIPT_DIR = Path(__file__).parent
 PLACEHOLDERS = ("<", "0000")
@@ -315,9 +315,9 @@ def project_client(fnd: dict, credential=None):
     are preview surfaces, and without it they are simply absent -- with an error that does
     not mention preview anywhere.
 
-    `credential` is an escape hatch for callers that need a different token timeout. The
-    default AzureCliCredential gives `az` 10 seconds, which is enough for one call and not
-    enough when several threads ask at once -- see deploy_voc_agent's corpus upload.
+    Explicit credentials are preserved. Otherwise the shared credential factory keeps a
+    selected deployment profile tenant-bound, with the legacy credential chain unchanged
+    when no profile is selected.
     """
     try:
         from azure.ai.projects import AIProjectClient  # noqa: PLC0415
@@ -333,11 +333,9 @@ def project_client(fnd: dict, credential=None):
             "The installed azure-ai-projects is the previous generation (1.x): it has no "
             'PromptAgentDefinition and no Fabric tool. Run: pip install --upgrade "azure-ai-projects>=2.4.0"'
         )
-    from azure.identity import DefaultAzureCredential  # noqa: PLC0415
-
     return AIProjectClient(
         endpoint=fnd["project_endpoint"],
-        credential=credential or DefaultAzureCredential(),
+        credential=credential if credential is not None else get_sdk_credential(),
         allow_preview=True,
     )
 

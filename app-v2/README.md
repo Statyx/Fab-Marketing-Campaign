@@ -1,7 +1,8 @@
 # Customer 360 Cockpit
 
-Marketing & churn cockpit for Microsoft Fabric — the V2 of the demo, hosted on Rayfin in
-**Sweden Central** while the entire data plane stays in the existing West US 3 workspace.
+Marketing & churn cockpit for Microsoft Fabric — the V2 of the demo. The original deployment
+hosts the app on Rayfin in **Sweden Central** with the data plane in West US 3. An isolated
+replay targets the app and data at the selected profile's workspace instead.
 
 The app is a browser-only client: there is no server-side code and no database. It reads the
 `SM_Marketing_Analytics` semantic model directly over the Power BI `executeQueries` REST API
@@ -53,11 +54,102 @@ what lets it answer when sign-in itself is what failed.
 ## Getting started
 
 ```bash
-# Deploy app to Fabric and start the local dev server
+# This deploys to Fabric before starting the local dev server.
 npm run dev
 ```
 
 Open [http://localhost:5173](http://localhost:5173) to view the app.
+
+### Isolated deployment profiles
+
+`FAB_MARKETING_PROFILE_DIR` selects an absolute or **repository-relative** profile directory.
+Otherwise, `deployments/active-profile.json` selects `{"profile":"new-tenant"}` under
+`deployments/`. No selection keeps the original app environment and Rayfin behavior.
+An invalid selection fails rather than falling back to the old tenant.
+
+Prepare these private files before using the app with a selected profile:
+
+| File under the profile | Contents |
+| --- | --- |
+| `config.yaml` / `state.json` | The shared Python deployment configuration and its stamped receipt |
+| `app/.env.production.local` | Production `VITE_*` values |
+| `app/.env.development.local` | Development `VITE_*` values |
+| `app/.env` | Only `RAYFIN_TENANT_ID` and `RAYFIN_WORKSPACE_ID`, matching the selected receipt |
+
+Both mode-local files must explicitly define `VITE_ENTRA_CLIENT_ID`, `VITE_ENTRA_TENANT_ID`,
+`VITE_DATA_WORKSPACE_ID`, `VITE_SEMANTIC_MODEL_ID`, `VITE_FOUNDRY_ENDPOINT`,
+`VITE_FOUNDRY_SUPERVISOR` and `VITE_FOUNDRY_MODEL`. Tenant, data workspace, model, and Foundry
+settings are compared with the selected configuration/receipt; the SPA must not reuse the
+legacy client ID. The Foundry endpoint must match both `state.foundry_project_endpoint` and
+`config.foundry.project_endpoint`. The model deployment name comes only from
+`config.foundry.model_deployment`; it is not a deployment receipt. SPA registration is supplied
+separately, never inferred from Foundry state. Optional `VITE_FABRIC_*` and `VITE_RAYFIN_*` hosting values must match the
+selected Rayfin receipt. Omit hosting values before the first app deployment: configured MSAL
+still owns authentication, and the data/Foundry calls do not use Rayfin session tokens.
+
+Vite loads **only the selected `app/` environment directory**, including when invoked through
+`build:fabric`. The mode-local file must contain every `VITE_*` value; inherited or base-file
+overrides cannot silently add a previous tenant's settings. `predev` and `prebuild` only read
+and validate a selected profile; they do not run `rayfin env` or write the original app env.
+Builds and `vite preview` use the selected `artifacts/app-v2/dist` directory, not the legacy `dist`.
+The wrapper supplies `FAB_MARKETING_APP_DIST` to the existing Rayfin hosting configuration so
+it packages that same output; without a profile, the folder still defaults to `dist`.
+Tests do not authenticate, deploy, or generate environment files.
+
+Selected builds also replace the original frozen-answer input. An absent
+`artifacts/captures/frozen_answers.json` produces a build warning and an empty answer
+dictionary: the existing live-supervisor path handles every miss. The old tenant's recording
+is never substituted. A present capture must be valid JSON with `answers` and the capture
+writer's `deployment` metadata: `tenantId`, `workspaceId`, `semanticModelId`, `dataAgentId`,
+`projectEndpoint`, `agentName`, and `model`, all matching the selected receipt/environment.
+Invalid or stale captures stop the build rather
+than switching silently to live mode. Only `answers` is included in the bundle, never the
+private provenance. Capture generators must use
+`output_path(ANSWERS, "captures", "frozen_answers.json")` and write this metadata; the local app
+workflow never invokes a capture generator.
+
+After the deployment gate and separate approval, use the existing `npm run rayfin:up`
+workflow. It supplies `--tenant`, `--workspace-id`, and `--env-file` itself. Profile workflows
+reject target overrides, subcommands and `--force`. `npm run dev` **still deploys** (excluding
+static hosting); it is not an offline-development command. `npm run build` and
+`npm run build:fabric` build locally and never sign in.
+
+Rayfin **1.34.0** has two independent local stores. Its exported `auth` module honors
+`RAYFIN_CONFIG_DIR` (`dist/auth/constants.js`, `state.js`, `cache.js`); `AZURE_CONFIG_DIR`
+does not isolate it. For a separately approved `rayfin login --tenant <tenant-id>`, set
+`RAYFIN_CONFIG_DIR` to `deployment.rayfin_config_dir` from the selected private configuration.
+If that field is absent, the wrapper derives `.rayfin` beside `deployment.azure_config_dir`.
+Both locations must be absolute. Keep the Rayfin cache outside the repository and OneDrive,
+for example beside the isolated Azure CLI cache under `LOCALAPPDATA/Azure-Brain/tenant-profiles`.
+**Gitignore does not stop OneDrive syncing tokens.** Profile-local caches, normal/global caches,
+overlapping Azure/Rayfin directories, and conflicting inherited cache selections are rejected.
+The wrapper creates or moves no cache: a separately approved login owns it. The wrapper checks
+the persisted user/tenant and silently acquires a token whose identity matches
+`deployment.expected_account`; `up` cannot open a different account picker mid-deployment.
+Before invoking `up`, it reads the workspace and any recorded AppBackend using that token.
+A changed workspace name or wrong item is rejected before the CLI's name-first lookup.
+
+For a profile already authenticated with Azure CLI, explicitly set
+`deployment.rayfin_auth_source: azure-cli`. The wrapper then obtains a delegated Fabric token
+through the shared Python profile/identity checks and passes it to the installed CLI through
+its supported `RAYFIN_TOKEN` input. No Rayfin login/cache files are fabricated or populated.
+Tenant, user, Fabric audience, expiry and the live target are checked before deployment.
+An acquisition failure stops; it never falls back to another login. Arbitrary inherited
+tokens remain forbidden. The default `rayfin` source keeps the separate-cache workflow above.
+
+There is **no alternate deployment registry root** in the installed CLI.
+`dist/utils/deployments-registry.js` fixes it at `rayfin/.deployments.json`.
+`--env-file` selects interpolation input, not output. `dist/commands/up/up.js` still writes
+`rayfin/.env` and the app-root `.env.local`, and selects receipts by sanitized workspace name
+before workspace ID. Back up those files and the old mode-local envs **before the first new
+deployment**. The wrapper ignores the old active entry, refuses name/ID collisions, and checks
+the new active receipt plus retention of unrelated records after success. It never deletes or
+renames old entries. Use the package scripts, not a raw `rayfin up`, to keep these guards.
+
+The CLI also rewrites `rayfin.yml` with the resolved static folder and the new hosting URL.
+The wrapper restores the parameterized template after the command, but only when those are
+the only changes; unexpected concurrent edits cause an explicit error instead of being erased.
+Live URLs and machine-specific paths stay in the ignored deployment receipts, not the template.
 
 ## Project structure
 
@@ -81,7 +173,8 @@ Open [http://localhost:5173](http://localhost:5173) to view the app.
 │   └── services/
 │       ├── IAuthService.ts        # Auth service contract + AuthUser type
 │       ├── MockAuthService.ts     # Local-dev impl (email/password)
-│       ├── RayfinAuthService.ts   # Production impl (Fabric brokered auth)
+│       ├── RayfinAuthService.ts   # Non-MSAL fallback (Fabric brokered auth)
+│       ├── MsalAuthService.ts     # Configured Entra user/session service
 │       ├── msal.ts                # Token acquisition (3 distinct audiences)
 │       ├── powerbi.ts             # executeQueries transport
 │       ├── queries.ts             # Every DAX string + its row mapper
@@ -96,8 +189,8 @@ Open [http://localhost:5173](http://localhost:5173) to view the app.
 | Command | Description |
 |---------|-------------|
 | `npm run dev` | Deploy app to Fabric and start local dev server |
-| `npm run build` | Production build |
+| `npm run build` | Local production build using the selected profile, if any |
 | `npm run build:fabric` | Build for Fabric deployment (entrypoint for `rayfin up staticapp deploy`) |
 | `npm run lint` | Lint with ESLint |
-| `npm run test` | Run unit tests with Vitest |
+| `npm run test` | Run offline unit tests with Vitest (no Rayfin preparation) |
 | `npm run rayfin:up` | Deploy app to Fabric (no local dev server) |

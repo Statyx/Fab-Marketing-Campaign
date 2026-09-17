@@ -27,65 +27,67 @@ import trace_source  # noqa: E402
 from workflow import build_workflow  # noqa: E402
 
 # ── Config ───────────────────────────────────────────────────
-# src/state.json is the source of truth, so the portal can never point at a stale or
-# deleted item. Env vars override it; there are no hardcoded IDs.
+# The selected deployment receipt owns the IDs. Without a profile, the original
+# src/config.yaml and src/state.json paths and environment overrides still apply.
 
 _SRC = Path(__file__).resolve().parents[2] / "src"
+sys.path.insert(0, str(_SRC))
+import helpers as deployment_helpers  # noqa: E402
+
+_BOUND_PROFILE = deployment_helpers.profile_dir()
+
+
+def _check_profile():
+    if deployment_helpers.profile_dir() != _BOUND_PROFILE:
+        raise RuntimeError("Deployment profile changed; restart the portal before making requests")
 
 
 def _state() -> dict:
-    try:
-        return json.loads((_SRC / "state.json").read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+    _check_profile()
+    return deployment_helpers.load_state()
 
 
 def _config_value(key: str, default: str) -> str:
-    """Read a scalar from src/config.yaml with a small regex (avoids a pyyaml dependency)."""
-    try:
-        text = (_SRC / "config.yaml").read_text(encoding="utf-8")
-        m = re.search(rf'^\s*{key}:\s*"([^"]+)"', text, re.M)
-        if m:
-            return m.group(1)
-    except Exception:
-        pass
-    return default
+    config = _config_dict()
+    value = config.get(key, config.get("storyline", {}).get(key, default))
+    if not isinstance(value, str):
+        raise RuntimeError(f"Configuration value '{key}' must be a string")
+    return value
 
 
 def _config_int(key: str, default: int) -> int:
-    """Read an unquoted integer scalar from src/config.yaml (volumes block)."""
-    try:
-        text = (_SRC / "config.yaml").read_text(encoding="utf-8")
-        m = re.search(rf'^\s*{key}:\s*(\d+)', text, re.M)
-        if m:
-            return int(m.group(1))
-    except Exception:
-        pass
-    return default
+    value = _config_dict().get("volumes", {}).get(key, default)
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise RuntimeError(f"Configuration volume '{key}' must be an integer")
+    return value
 
 
 def _config_dict() -> dict:
-    """Whole config.yaml, for the nested blocks a regex cannot reach (foundry.supervisor.*).
-
-    yaml is imported here and not at the top, behind a swallowed exception, for the same
-    reason trace_source is path-pinned above: the portal must not fail to start over a
-    dependency that only one panel needs. Without it the workflow view falls back to
-    state.json alone -- which is the receipt anyway, so the picture stays truthful and
-    only loses the names of things nobody deployed.
-    """
+    _check_profile()
     try:
-        import yaml
-        return yaml.safe_load((_SRC / "config.yaml").read_text(encoding="utf-8")) or {}
-    except Exception:
+        return deployment_helpers.load_config()
+    except FileNotFoundError:
+        if _BOUND_PROFILE is not None:
+            raise
         return {}
 
 
 _ST = _state()
-WORKSPACE_ID = os.getenv("WORKSPACE_ID") or _ST.get("workspace_id", "")
-REPORT_ID = os.getenv("REPORT_ID") or _ST.get("report_id", "")
-DATASET_ID = os.getenv("DATASET_ID") or _ST.get("semantic_model_id", "")
-DATA_AGENT_ID = os.getenv("DATA_AGENT_ID") or _ST.get("data_agent_id", "")
-ONTOLOGY_ID = os.getenv("ONTOLOGY_ID") or _ST.get("ontology_id", "")
+
+
+def _item_id(variable: str, key: str) -> str:
+    recorded = _ST.get(key, "")
+    override = os.getenv(variable)
+    if _BOUND_PROFILE is not None and override and override != recorded:
+        raise RuntimeError(f"{variable} does not match the selected deployment receipt")
+    return override or recorded
+
+
+WORKSPACE_ID = _item_id("WORKSPACE_ID", "workspace_id")
+REPORT_ID = _item_id("REPORT_ID", "report_id")
+DATASET_ID = _item_id("DATASET_ID", "semantic_model_id")
+DATA_AGENT_ID = _item_id("DATA_AGENT_ID", "data_agent_id")
+ONTOLOGY_ID = _item_id("ONTOLOGY_ID", "ontology_id")
 
 WORKSPACE_NAME = _config_value("workspace_name", "Customer 360 Marketing")
 SM_NAME = _config_value("semantic_model_name", "SM_Marketing_Analytics")
@@ -284,6 +286,7 @@ _token_lock = threading.Lock()                    # prevent a refresh stampede
 
 
 def _cached_token(scope: str, force: bool = False) -> str:
+    _check_profile()
     cached = _token_cache.get(scope)
     if not force and cached and cached[1] > _time.time() + 300:   # 5 min buffer
         return cached[0]
@@ -291,6 +294,22 @@ def _cached_token(scope: str, force: bool = False) -> str:
         cached = _token_cache.get(scope)          # re-check inside the lock
         if not force and cached and cached[1] > _time.time() + 300:
             return cached[0]
+        if _BOUND_PROFILE is not None:
+            getters = {
+                "https://api.fabric.microsoft.com/.default": deployment_helpers.get_fabric_token,
+                "https://analysis.windows.net/powerbi/api/.default": deployment_helpers.get_powerbi_token,
+            }
+            if scope not in getters:
+                raise ValueError(f"No checked profile token provider for {scope}")
+            token = getters[scope]()
+            payload = token.split(".")[1]
+            claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+            expires_on = claims.get("exp")
+            if (not isinstance(expires_on, (int, float)) or isinstance(expires_on, bool)
+                    or expires_on <= _time.time()):
+                raise RuntimeError("Profile token has no usable expiry")
+            _token_cache[scope] = (token, expires_on)
+            return token
         last_err: Exception | None = None
         for attempt in range(3):
             try:
@@ -367,7 +386,7 @@ async def health():
     status["tenantId"] = _extract_tenant_id()
     if not REPORT_ID:
         status["ok"] = False
-        status["error"] = "report_id missing from src/state.json — run deploy_report.py"
+        status["error"] = "report_id missing from the selected state.json — run deploy_report.py"
     return JSONResponse(status, status_code=200 if status["ok"] else 503)
 
 
@@ -749,7 +768,7 @@ async def agent_chat(agent_key: str, req: ChatRequest):
     if agent_key not in AGENTS:
         raise HTTPException(404, f"Unknown agent: {agent_key}")
     if not DATA_AGENT_ID:
-        raise HTTPException(503, "data_agent_id missing from src/state.json — run deploy_data_agent.py")
+        raise HTTPException(503, "data_agent_id missing from the selected state.json — run deploy_data_agent.py")
 
     base = _agent_base(AGENTS[agent_key]["id"])
 
@@ -908,7 +927,7 @@ async def _run_question(agent_key: str, base: str, req: ChatRequest) -> ChatResp
 async def embed_token():
     """Report embed URL + the signed-in user's Power BI access token."""
     if not REPORT_ID:
-        raise HTTPException(503, "report_id missing from src/state.json — run deploy_report.py")
+        raise HTTPException(503, "report_id missing from the selected state.json — run deploy_report.py")
     async with httpx.AsyncClient(timeout=30) as client:
         report_resp = await client.get(f"{PBI_BASE}/groups/{WORKSPACE_ID}/reports/{REPORT_ID}",
                                        headers=pbi_headers())

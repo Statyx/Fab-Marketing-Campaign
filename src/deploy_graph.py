@@ -30,6 +30,7 @@ _restore_path()
 if hasattr(sys.stdout, "reconfigure"): sys.stdout.reconfigure(encoding="utf-8")
 
 import requests
+from datetime import datetime, timezone
 from helpers import (get_fabric_token, fabric_headers, load_config, load_state,
                      ensure_tenant)
 from deploy_ontology import ENTITIES, RELATIONSHIPS
@@ -113,6 +114,50 @@ def build_definition(lh, locations):
     return gt, ds, gd, st
 
 
+def _job_time(value):
+    if not value:
+        return None
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed
+
+
+def wait_for_graph_refresh(api, ws, gid, headers, location, max_wait=600):
+    for _ in range(max_wait // 5):
+        time.sleep(5)
+        response = requests.get(location, headers=headers, timeout=60)
+        response.raise_for_status()
+        job = response.json()
+        status = job.get("status")
+        print(f"   refresh: {status}")
+        if status == "Completed":
+            return job
+        if status in ("Failed", "Cancelled"):
+            raise RuntimeError(f"RefreshGraph {status}: {job.get('failureReason')}")
+        if status == "Deduped":
+            anchor = _job_time(job.get("startTimeUtc"))
+            if anchor is None:
+                raise RuntimeError("Deduplicated refresh has no start time to identify the actual job")
+            response = requests.get(f"{api}/workspaces/{ws}/items/{gid}/jobs/instances",
+                                    headers=headers, timeout=60)
+            response.raise_for_status()
+            matches = []
+            for candidate in response.json().get("value", []):
+                if (candidate.get("id") == job.get("id")
+                        or candidate.get("status") == "Deduped"
+                        or candidate.get("jobType") not in ("Refresh", "RefreshGraph")):
+                    continue
+                start, end = _job_time(candidate.get("startTimeUtc")), _job_time(candidate.get("endTimeUtc"))
+                if start and start <= anchor and (end is None or end >= anchor):
+                    matches.append(candidate)
+            if len(matches) > 1:
+                raise RuntimeError("Cannot uniquely identify the refresh behind the deduplicated request")
+            if matches:
+                actual = matches[0]
+                location = f"{api}/workspaces/{ws}/items/{gid}/jobs/instances/{actual['id']}"
+                print(f"   waiting for existing refresh {actual['id']}")
+    raise TimeoutError("RefreshGraph did not reach Completed")
+
+
 def main():
     cfg = load_config(); state = load_state()
     ensure_tenant(cfg)
@@ -146,14 +191,23 @@ def main():
     print(f"   HTTP {r.status_code}")
     if r.status_code == 202:
         loc = r.headers.get("Location") or r.headers.get("Operation-Location")
-        if loc:
-            for _ in range(40):
-                time.sleep(3); stt = requests.get(loc, headers=headers).json().get("status")
-                if stt in ("Succeeded", "Completed", "Failed"):
-                    print(f"   op: {stt}")
-                    if stt == "Failed":
-                        print("   ", requests.get(loc, headers=headers).text[:400])
-                    break
+        if not loc and r.headers.get("x-ms-operation-id"):
+            loc = f"{api}/operations/{r.headers['x-ms-operation-id']}"
+        if not loc:
+            raise RuntimeError("Graph definition update has no operation to poll")
+        for _ in range(40):
+            time.sleep(3)
+            response = requests.get(loc, headers=headers, timeout=60)
+            response.raise_for_status()
+            operation = response.json()
+            stt = operation.get("status")
+            if stt in ("Failed", "Cancelled"):
+                raise RuntimeError(f"Graph definition {stt}: {operation.get('error')}")
+            if stt in ("Succeeded", "Completed"):
+                print(f"   op: {stt}")
+                break
+        else:
+            raise TimeoutError("Graph definition update did not complete")
     elif r.status_code not in (200, 201):
         raise RuntimeError(f"updateDefinition failed: {r.status_code} {r.text[:500]}")
 
@@ -162,14 +216,17 @@ def main():
                        headers=headers, json={}, timeout=60)
     print(f"   HTTP {jr.status_code}")
     loc = jr.headers.get("Location")
-    if jr.status_code == 202 and loc:
-        for _ in range(80):
-            time.sleep(5); j = requests.get(loc, headers=headers).json(); stt = j.get("status")
-            print(f"   refresh: {stt}")
-            if stt in ("Completed", "Failed", "Cancelled", "Deduped"):
-                if stt == "Failed": print("   failure:", j.get("failureReason"))
-                break
+    if jr.status_code not in (200, 202):
+        raise RuntimeError(f"RefreshGraph failed ({jr.status_code}): {jr.text[:400]}")
+    if loc:
+        job = wait_for_graph_refresh(api, ws, gid, headers, loc)
+    elif jr.status_code != 200 or jr.json().get("status") != "Completed":
+        raise RuntimeError("RefreshGraph has no completed result or job location to poll")
+    else:
+        job = jr.json()
     state["graph_model_id"] = gid
+    if job.get("id"):
+        state["graph_refresh_job_id"] = job["id"]
     from helpers import save_state
     save_state(state)
     print("\nDone.")

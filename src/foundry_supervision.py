@@ -76,12 +76,12 @@ if hasattr(sys.stdout, "reconfigure"):
 
 import pandas as pd
 
-from helpers import load_config, load_state, print_step
+from helpers import load_config, load_state, output_path, print_step, raw_dir
 from deploy_foundry_agent import foundry_config, project_client, app_insights_status
 
 ROOT = Path(__file__).resolve().parent.parent
-RAW = ROOT / "data" / "raw"
-OUT_DIR = ROOT / "data" / "supervision"
+RAW = raw_dir()
+OUT_DIR = output_path(ROOT / "data" / "supervision", "supervision")
 
 ONTOLOGY = "ontology"          # relationships, root cause, impact -- GQL
 SEMANTIC_MODEL = "semantic_model"  # every number -- DAX
@@ -182,7 +182,7 @@ def local_truth(cfg) -> dict:
     local reference at all, use --repeat and read `stability`.
     """
     if not (RAW / "crm" / "crm_customer_profile.csv").exists():
-        raise SystemExit("No generated dataset in data/raw. Run: python src/generate_data.py")
+        raise SystemExit(f"No generated dataset in {RAW}. Run: python src/generate_data.py")
 
     st = cfg["storyline"]
     threshold = cfg["churn_model"]["at_risk_threshold"]

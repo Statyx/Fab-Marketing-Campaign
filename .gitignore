@@ -41,6 +41,8 @@ data/supervision/
 src/config.yaml
 src/state.json
 .vscode/mcp.json
+deployments/
+.azure/
 
 # Rayfin app (app-v2/) — written by `rayfin up`, all contain workspace / item / capacity GUIDs.
 # The leak guard is an allow-list on GUIDs, so any of these in a commit fails CI on a public repo.

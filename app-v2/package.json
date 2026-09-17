@@ -9,15 +9,15 @@
     "description": "Marketing & churn cockpit on Fabric — Detect / Diagnose / Quantify / Act, reading a semantic model over DAX and a Foundry supervisor over A2A"
   },
   "scripts": {
-    "predev": "rayfin env --framework vite",
-    "prebuild": "rayfin env --framework vite",
-    "dev": "rayfin up --exclude-services staticHosting && vite",
+    "predev": "node scripts/rayfin-profile.mjs env --mode development",
+    "prebuild": "node scripts/rayfin-profile.mjs env",
+    "dev": "node scripts/rayfin-profile.mjs up --mode development --exclude-services staticHosting && vite",
     "build": "tsc -b && vite build",
     "build:fabric": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
-    "rayfin:up": "rayfin up"
+    "rayfin:up": "node scripts/rayfin-profile.mjs up"
   },
   "dependencies": {
     "@azure/msal-browser": "^5.19.0",

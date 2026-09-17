@@ -47,12 +47,13 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from deploy_supervisor_agent import supervisor_config  # noqa: E402
 from deploy_foundry_agent import project_client  # noqa: E402
-from helpers import ensure_tenant, load_config  # noqa: E402
+from helpers import (ensure_tenant, get_sdk_credential, load_config, load_state,
+                     output_path, profile_dir)  # noqa: E402
 from verify_supervisor import _items, _tool_names  # noqa: E402
 
 APP = Path(__file__).parent.parent / "app-v2" / "src" / "data"
 QUESTIONS = APP / "frozen-questions.generated.json"
-ANSWERS = APP / "frozen-answers.generated.json"
+ANSWERS = output_path(APP / "frozen-answers.generated.json", "captures", "frozen_answers.json")
 
 # Same discriminator as the browser client (`app-v2/src/services/foundry.ts`): a subordinate
 # dying mid-A2A is reported as HTTP 400, so the STATUS is useless and the code is the only
@@ -74,10 +75,26 @@ def load_json(path: Path, default):
 
 
 def save_answers(payload: dict) -> None:
-    APP.mkdir(parents=True, exist_ok=True)
+    ANSWERS.parent.mkdir(parents=True, exist_ok=True)
     with open(ANSWERS, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
         f.write("\n")
+
+
+def capture_context(cfg, state, fnd):
+    required = ("workspace_id", "semantic_model_id", "data_agent_id",
+                "foundry_supervisor_agent_name")
+    missing = [key for key in required if not state.get(key)]
+    if missing:
+        raise RuntimeError(f"Deploy the profile before capturing answers; missing state: {missing}")
+    if state["foundry_supervisor_agent_name"] != fnd["supervisor_agent_name"]:
+        raise RuntimeError("Recorded supervisor does not match the selected configuration")
+    return {
+        "tenantId": cfg["tenant_id"], "workspaceId": state["workspace_id"],
+        "semanticModelId": state["semantic_model_id"], "dataAgentId": state["data_agent_id"],
+        "projectEndpoint": fnd["project_endpoint"], "agentName": fnd["supervisor_agent_name"],
+        "model": fnd["model_deployment"],
+    }
 
 
 def ask(client, agent: str, model: str, question: str, attempts: int = 3):
@@ -129,6 +146,12 @@ def main() -> int:
 
     fnd = supervisor_config(cfg)
     agent, model = fnd["supervisor_agent_name"], fnd["model_deployment"]
+    if profile_dir() is not None:
+        context = capture_context(cfg, load_state(), fnd)
+        if ANSWERS.exists() and payload.get("deployment") != context:
+            raise RuntimeError("Existing captures are not from this profile's deployment; "
+                               "archive them explicitly before capturing")
+        payload["deployment"] = context
 
     todo = [e for e in entries if args.force or e["q"] not in answers]
     print("=" * 74)
@@ -139,8 +162,7 @@ def main() -> int:
         print("\nNothing to do. Use --force to re-record.")
         return 0
 
-    from azure.identity import DefaultAzureCredential  # noqa: PLC0415
-    client = project_client(fnd, DefaultAzureCredential(process_timeout=90))
+    client = project_client(fnd, get_sdk_credential(process_timeout=90))
 
     ok = 0
     for i, e in enumerate(todo, 1):

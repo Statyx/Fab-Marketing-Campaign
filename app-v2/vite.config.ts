@@ -2,16 +2,22 @@ import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react-swc';
 import { resolve } from 'path';
 import { defineConfig, loadEnv } from 'vite';
+import { appProfile, checkReceipts, profileCapturePlugin, readRegistry, validateViteEnv } from './scripts/deployment-profile.mjs';
 
 export default defineConfig(({ mode }) => {
   // Pin the dev server to Rayfin's per-project port (VITE_PORT, mapped from
   // RAYFIN_PUBLIC_FRONTEND_PORT in .env.local) so multiple local frontends
   // don't collide and the deployed backend can allow-list one stable origin.
-  const env = loadEnv(mode, process.cwd(), 'VITE_');
+  const profile = appProfile(mode);
+  const envDir = profile?.envDir ?? process.cwd();
+  const env = loadEnv(mode, envDir, 'VITE_');
+  validateViteEnv(profile, env);
+  if (profile) checkReceipts(profile, readRegistry());
   const port = env.VITE_PORT ? Number(env.VITE_PORT) : undefined;
 
   return {
-    plugins: [react(), tailwindcss()],
+    envDir,
+    plugins: [react(), tailwindcss(), ...(profile ? [profileCapturePlugin(profile)] : [])],
     resolve: {
       alias: {
         '@': resolve(import.meta.dirname, 'src'),
@@ -19,6 +25,7 @@ export default defineConfig(({ mode }) => {
     },
     ...(port ? { server: { port, strictPort: true } } : {}),
     build: {
+      ...(profile ? { outDir: profile.buildDir, emptyOutDir: true } : {}),
       target: 'es2022',
       rollupOptions: {
         // Two pages, not one: `blank.html` is MSAL's redirect landing page and has to be a

@@ -17,7 +17,7 @@ services:
     dialect: mssql
   staticHosting:
     enabled: true
-    folder: dist
+    folder: ${FAB_MARKETING_APP_DIST:-dist}
     buildCommand: npm run build:fabric
     indexDocument: index.html
   storage:

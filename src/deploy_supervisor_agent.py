@@ -67,15 +67,20 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+import time
 import sys
 from pathlib import Path
+import requests
 from urllib.parse import urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from deploy_foundry_agent import check_agent_name, foundry_config, project_client  # noqa: E402
 from deploy_voc_agent import DEFAULT_AGENT_NAME as VOC_DEFAULT_AGENT  # noqa: E402
-from helpers import load_config, load_state, print_step, save_state  # noqa: E402
+from helpers import (  # noqa: E402
+    ensure_tenant, get_resource_token, get_sdk_credential, load_config, load_state, print_step, profile_dir,
+    save_state,
+)
 
 DEFAULT_AGENT_NAME = "Marketing-Supervisor"
 DEFAULT_A2A_CONNECTION = "FrontDoorA2A"
@@ -419,6 +424,10 @@ def arm_a2a_connection_body(target: str) -> dict:
 
 def _az(args: list[str]) -> tuple[int, str]:
     """Run az and hand back (returncode, output). shell=True: az is a .cmd on Windows."""
+    if profile_dir() is not None:
+        ensure_tenant()
+    if args and args[0] == "rest":
+        raise RuntimeError("Use requests with a checked ARM token, not az rest from Python")
     out = subprocess.run(["az", *args], capture_output=True, text=True,
                          timeout=300, shell=True)
     return out.returncode, (out.stdout or "") + (out.stderr or "")
@@ -460,12 +469,28 @@ def ensure_a2a_connection(sub, rg, account, project, name, target) -> str:
     """Create or update the A2A connection. Idempotent: PUT with the same body is a no-op."""
     url = (f"https://management.azure.com{connection_arm_id(sub, rg, account, project, name)}"
            f"?api-version={ARM_API_VERSION}")
-    rc, out = _az(["rest", "--method", "put", "--url", url,
-                   "--body", json.dumps(arm_a2a_connection_body(target)),
-                   "--headers", "Content-Type=application/json"])
-    if rc:
-        raise SystemExit(f"Could not create the A2A connection '{name}':\n{out[:800]}")
-    return connection_arm_id(sub, rg, account, project, name)
+    token = get_resource_token("https://management.azure.com")
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    body = arm_a2a_connection_body(target)
+    response = requests.put(url, headers=headers, json=body, timeout=120)
+    response.raise_for_status()
+    expected = body["properties"]
+    for attempt in range(24):
+        response = requests.get(url, headers=headers, timeout=60)
+        if response.status_code != 404:
+            response.raise_for_status()
+            actual = response.json().get("properties", {})
+            if actual.get("provisioningState") == "Failed":
+                raise RuntimeError(f"A2A connection '{name}' provisioning failed")
+            fields_match = all(actual.get(key) == value for key, value in expected.items()
+                               if key != "metadata")
+            metadata_match = all(actual.get("metadata", {}).get(key) == value
+                                 for key, value in expected.get("metadata", {}).items())
+            if fields_match and metadata_match:
+                return connection_arm_id(sub, rg, account, project, name)
+        if attempt < 23:
+            time.sleep(5)
+    raise TimeoutError(f"A2A connection '{name}' did not match the requested target/authentication")
 
 
 def read_agent(client, agent_name: str) -> dict:
@@ -638,9 +663,7 @@ def main() -> int:
     print("   NOTE the target is not validated at create time -- a wrong URL deploys cleanly")
     print("        and fails only when invoked. Use --verify.")
 
-    from azure.identity import DefaultAzureCredential  # noqa: PLC0415
-
-    client = project_client(fnd, DefaultAzureCredential(process_timeout=90))
+    client = project_client(fnd, get_sdk_credential(process_timeout=90))
     try:
         print_step(3, 4, "Incoming A2A on both subordinates")
         print(f"   {fnd['agent_name']}: " + ensure_incoming_a2a(

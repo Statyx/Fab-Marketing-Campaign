@@ -48,18 +48,14 @@ from pathlib import Path
 import requests
 
 sys.path.insert(0, str(Path(__file__).parent))
-from helpers import load_config, load_state, print_step, ensure_tenant
+from helpers import load_config, load_state, print_step, ensure_tenant, get_powerbi_token
 from deploy_report import build_report
 
 PBI = "https://api.powerbi.com/v1.0/myorg"
 
 
 def pbi_token() -> str:
-    out = subprocess.check_output(
-        ["az", "account", "get-access-token", "--resource",
-         "https://analysis.windows.net/powerbi/api", "--query", "accessToken", "-o", "tsv"],
-        shell=True)
-    return out.decode().strip()
+    return get_powerbi_token()
 
 
 def run_dax(ws, sm_id, tok, dax):

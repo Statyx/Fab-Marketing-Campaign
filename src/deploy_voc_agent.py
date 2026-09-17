@@ -37,9 +37,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from deploy_foundry_agent import check_agent_name, foundry_config, project_client  # noqa: E402
-from helpers import load_config, load_state, print_step, save_state  # noqa: E402
+from helpers import (  # noqa: E402
+    get_sdk_credential, load_config, load_state, print_step, profile_dir, raw_dir, save_state,
+)
 
-CORPUS_DIR = Path(__file__).resolve().parents[1] / "data" / "raw" / "text" / "voice_of_customer"
+CORPUS_DIR = raw_dir() / "text" / "voice_of_customer"
 CORPUS_GLOB = "VOC_*.md"
 
 DEFAULT_AGENT_NAME = "Voice-Of-Customer"
@@ -183,8 +185,15 @@ def main() -> int:
     ap.add_argument("--check", action="store_true",
                     help="preflight only -- creates nothing, uploads nothing")
     ap.add_argument("--recreate", action="store_true",
-                    help="create a fresh vector store even if one with this name exists")
+                    help="create a fresh vector store even if one with this name exists "
+                         "(legacy mode only)")
     args = ap.parse_args()
+    selected_profile = profile_dir()
+    if args.recreate and selected_profile is not None:
+        raise SystemExit(
+            "--recreate is not allowed with a selected deployment profile; "
+            "replay must preserve existing vector stores."
+        )
 
     cfg, state = load_config(), load_state()
     fnd = voc_config(cfg)
@@ -201,13 +210,19 @@ def main() -> int:
     files = corpus_files()
     # A longer CLI timeout than the 10s default: the upload asks for tokens from several
     # threads at once, which is exactly when `az` is slowest.
-    from azure.identity import DefaultAzureCredential  # noqa: PLC0415
-    client = project_client(fnd, DefaultAzureCredential(process_timeout=CLI_TIMEOUT_SECONDS))
+    client = project_client(fnd, get_sdk_credential(process_timeout=CLI_TIMEOUT_SECONDS))
     oai = client.get_openai_client()
 
     print_step(2, 3, f"Vector store '{fnd['voc_vector_store_name']}'")
     store = None if args.recreate else find_vector_store(oai, fnd["voc_vector_store_name"])
     if store is not None and not is_complete(store, len(files)):
+        if selected_profile is not None:
+            client.close()
+            raise SystemExit(
+                f"Vector store {store.id} holds {indexed_count(store)}/{len(files)} files. "
+                "Selected deployment profile replay will not delete or rebuild it; "
+                "resolve the incomplete store separately before replaying."
+            )
         # Left over from a run that died mid-upload. Keeping it would wire the agent to a
         # partial index and answer "nothing found" with no error to explain why.
         print(f"   found {store.id} but it holds {indexed_count(store)}/{len(files)} files "
@@ -223,8 +238,8 @@ def main() -> int:
             sys.exit(f"Only {indexed}/{len(files)} files indexed -- refusing to create an "
                      "agent on a partial corpus. Re-run to rebuild.")
     else:
-        print(f"   reusing {store.id} ({indexed_count(store)} files) "
-              "-- pass --recreate to rebuild it")
+        hint = "" if selected_profile is not None else " -- pass --recreate to rebuild it"
+        print(f"   reusing {store.id} ({indexed_count(store)} files){hint}")
         indexed = indexed_count(store)
 
     print_step(3, 3, f"Create version of '{fnd['voc_agent_name']}'")

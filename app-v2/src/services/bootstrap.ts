@@ -18,8 +18,9 @@ function isLocalBackendUrl(url: string): boolean {
  * Read VITE_* env vars, initialize the Rayfin client, and return the right
  * auth service for the target backend.
  *
- * - Localhost API URL → {@link MockAuthService}
- * - Anything else     → {@link RayfinAuthService} (requires VITE_FABRIC_* vars)
+ * - Configured Entra  → {@link MsalAuthService}, regardless of the Rayfin backend
+ * - Otherwise local   → {@link MockAuthService}
+ * - Otherwise remote  → {@link RayfinAuthService} (requires VITE_FABRIC_* vars)
  */
 export function bootstrapAuth(): IAuthService {
   const apiUrl = import.meta.env.VITE_RAYFIN_API_URL || 'http://localhost:5168';

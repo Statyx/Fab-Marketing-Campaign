@@ -50,16 +50,15 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 import argparse
-import importlib
 import subprocess
 import time
 from pathlib import Path
 
 import requests
 from helpers import (load_config, load_state, get_fabric_token, fabric_headers, print_step,
-                     ensure_tenant as _ensure_tenant)
+                     ensure_tenant as _ensure_tenant, raw_dir)
 
-RAW = Path(__file__).parent.parent / "data" / "raw"
+RAW = raw_dir()
 
 # Canonical deploy order (name -> module). Each module exposes main().
 STEPS = [
@@ -106,12 +105,10 @@ def run_steps(names):
     total = len(names)
     for idx, name in enumerate(names, 1):
         print_step(idx, total, f"STEP: {name}  (module {mod_of[name]})")
-        try:
-            mod = importlib.import_module(mod_of[name])
-        except ModuleNotFoundError:
-            print(f"   (module {mod_of[name]} not implemented yet — skipping)")
-            continue
-        mod.main()
+        script = Path(__file__).with_name(f"{mod_of[name]}.py")
+        if not script.is_file():
+            raise FileNotFoundError(f"Required deployment step is missing: {script.name}")
+        subprocess.run([sys.executable, str(script)], check=True)
     print(f"\nOK  {total} step(s) processed.")
 
 

@@ -25,10 +25,11 @@ import json
 import sys
 from pathlib import Path
 
-import yaml
+from helpers import load_config, output_path
 
 ROOT = Path(__file__).resolve().parent.parent
-OUT = ROOT / "taskflow" / "marketing_taskflow.json"
+OUT = output_path(ROOT / "taskflow" / "marketing_taskflow.json",
+                  "taskflow", "marketing_taskflow.json")
 
 # Task types accepted by Fabric. Values are the lowercase forms the product writes
 # into the export file -- note "visualize", not "visualize data" as the docs table reads.
@@ -150,21 +151,22 @@ def main():
                    help="verify the committed file matches config.yaml instead of writing it")
     args = p.parse_args()
 
-    cfg = yaml.safe_load((ROOT / "src" / "config.yaml").read_text(encoding="utf-8"))
+    cfg = load_config()
     flow = build(cfg)
     text = json.dumps(flow, indent=2, ensure_ascii=False) + "\n"
+    label = OUT.relative_to(ROOT) if OUT.is_relative_to(ROOT) else OUT
 
     if args.check:
         if not OUT.exists():
-            sys.exit(f"MISSING {OUT.relative_to(ROOT)} - run: python src/build_taskflow.py")
+            sys.exit(f"MISSING {label} - run: python src/build_taskflow.py")
         if OUT.read_text(encoding="utf-8") != text:
-            sys.exit(f"STALE {OUT.relative_to(ROOT)} - run: python src/build_taskflow.py")
-        print(f"OK  {OUT.relative_to(ROOT)} is in sync with config.yaml")
+            sys.exit(f"STALE {label} - run: python src/build_taskflow.py")
+        print(f"OK  {label} is in sync with the selected config")
         return
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(text, encoding="utf-8")
-    print(f"OK  wrote {OUT.relative_to(ROOT)}  ({len(flow['tasks'])} tasks, {len(flow['edges'])} connectors)")
+    print(f"OK  wrote {label}  ({len(flow['tasks'])} tasks, {len(flow['edges'])} connectors)")
     print("    Import: workspace -> task flow details pane -> Import and export task flow -> Import")
     print("    Then replay the item assignments from taskflow/README.md (the file cannot carry them).")
 
