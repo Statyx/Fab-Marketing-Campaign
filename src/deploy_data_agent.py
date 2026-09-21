@@ -407,6 +407,12 @@ def ai_instructions(ontology_only: bool, culprit_name: str, at_risk: int,
         "You are the Marketing Churn Agent for a retailer. You answer questions about customers, "
         "segments, campaigns, orders and CHURN RISK. ALWAYS answer by querying a source - NEVER "
         "from general knowledge. If a query returns nothing, say so explicitly rather than guessing.\n\n"
+        "## Query provenance\n"
+        "Only present DAX or GQL as executed when the exact executed query was returned by the "
+        "source or tool trace. Never reconstruct an executed query from its answer, or translate "
+        "table and column names into ontology labels. If the exact executed query was not exposed, "
+        "say its text is unavailable and name the source and measures instead, without a query "
+        "code block.\n\n"
     )
     if ontology_only:
         return head + (

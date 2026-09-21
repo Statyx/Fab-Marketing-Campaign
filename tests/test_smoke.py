@@ -1377,6 +1377,16 @@ def test_the_agent_is_forbidden_from_answering_without_a_query():
     assert "invent" in lowered, "the agent must be told never to invent identities"
 
 
+@pytest.mark.parametrize("ontology_only", [False, True])
+def test_the_agent_must_not_reconstruct_query_provenance(ontology_only):
+    text = _agent_module().ai_instructions(ontology_only, "Black Friday Blast", 60).lower()
+    assert "exact executed query was returned by the source or tool trace" in text
+    assert "never reconstruct an executed query" in text
+    assert "table and column names into ontology labels" in text
+    assert "not exposed" in text and "its text is unavailable" in text
+    assert "without a query code block" in text
+
+
 def test_the_demo_questions_each_have_a_matching_fewshot():
     """The portal's canned buttons are a demo surface with no other guard.
 

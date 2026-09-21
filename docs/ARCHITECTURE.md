@@ -400,6 +400,9 @@ Hard rules given to the agent:
 - If aggregation in GQL is unavoidable, push `COUNT(DISTINCT …)` / `SUM(…)` into the query.
 - For "detect then diagnose" questions: take the figure from the semantic model, then traverse
   the graph for the explanation.
+- Quote an executed DAX/GQL query only when its exact text is exposed by the source or tool
+  trace. Otherwise name the source and measures and state that the query text is unavailable;
+  never reconstruct it from the answer or replace model names with ontology labels.
 
 `deploy_data_agent.py --ontology-only` deploys the single-source variant so the ontology
 numeric path can be re-probed on this tenant before trusting it. Ontology-only is an
